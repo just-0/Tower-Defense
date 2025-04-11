@@ -23,18 +23,22 @@ public class GestureReceiver : MonoBehaviour
     {
         websocket = new WebSocket("ws://localhost:8765");
 
-        websocket.OnMessage += (bytes) =>
-        {
-            string json = Encoding.UTF8.GetString(bytes);
-            GestureData data = JsonUtility.FromJson<GestureData>(json);
-            byte[] imageBytes = Convert.FromBase64String(data.image);
+       websocket.OnMessage += (bytes) =>
+	{
+	    string json = Encoding.UTF8.GetString(bytes);
+	    GestureData data = JsonUtility.FromJson<GestureData>(json);
 
-            if (receivedTexture == null)
-                receivedTexture = new Texture2D(2, 2);
+	    // Imprimir el número de dedos detectados
+	    Debug.Log($"Dedos detectados: {data.fingers}");
 
-            receivedTexture.LoadImage(imageBytes);
-            gestureImage.texture = receivedTexture;
-        };
+	    byte[] imageBytes = Convert.FromBase64String(data.image);
+
+	    if (receivedTexture == null)
+		receivedTexture = new Texture2D(2, 2);
+
+	    receivedTexture.LoadImage(imageBytes);
+	    gestureImage.texture = receivedTexture;
+	};
 
         await websocket.Connect();
     }
