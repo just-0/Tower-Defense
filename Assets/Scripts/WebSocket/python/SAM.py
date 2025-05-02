@@ -8,10 +8,13 @@ import torch
 import threading
 import time
 import base64
+import os
+from mobile_sam import sam_model_registry, SamPredictor
+import torch
 
-from mobile_sam import sam_model_registry, SamPredictor, SamAutomaticMaskGenerator # no necesario
+# from mobile_sam import sam_model_registry, SamPredictor, SamAutomaticMaskGenerator # no necesario
 #from fastsam import FastSAM, FastSAMPrompt # no necesario 
-#from segment_anything import sam_model_registry, SamPredictor  # no necesario principal
+# from segment_anything import sam_model_registry, SamPredictor  # no necesario principal
 class CameraManager:
     def __init__(self):
         self.camera = None
@@ -66,7 +69,8 @@ class SAMProcessor:
 
         model_type = "vit_t"  # El tipo para MobileSAM es vit_t
         #model_type = "vit_b"  # El tipo para MobileSAM es vit_t
-        checkpoint = "./models/mobile_sam.pt"  # Ruta al checkpoint de MobileSAM
+        # checkpoint = "./models/mobile_sam.pt"  # Ruta al checkpoint de MobileSAM
+        checkpoint = os.path.expanduser(r"~\Downloads\mobile_sam.pt")  # Ruta al checkpoint de MobileSAM
         #checkpoint = "./models/sam_vit_b_01ec64.pth"  # Ruta al checkpoint de MobileSAM
 
         self.sam = sam_model_registry[model_type](checkpoint=checkpoint)
@@ -119,6 +123,24 @@ class SAMProcessor:
         
         return buffer.getvalue()
 
+def detectar_aruco_zona_segura(image):
+    """Detecta un marcador ArUco y devuelve el centro de su posición"""
+    aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+    parameters = cv2.aruco.DetectorParameters()
+    detector = cv2.aruco.ArucoDetector(aruco_dict, parameters)
+
+    corners, ids, _ = detector.detectMarkers(image)
+
+    if ids is not None:
+        # Toma el primer marcador detectado (puedes filtrar por ID si quieres uno específico)
+        c = corners[0][0]
+        cx = int(np.mean(c[:, 0]))
+        cy = int(np.mean(c[:, 1]))
+        return (cx, cy)
+    
+    return None
+
+
 async def handle_client(websocket):
     camera_manager = CameraManager()
     sam_processor = SAMProcessor()
@@ -141,6 +163,18 @@ async def handle_client(websocket):
                 elif message == "STOP_CAMERA":
                     send_frames = False
                     camera_manager.stop_camera()
+
+                elif message == "GET_SAFE_ZONE":
+                    frame = camera_manager.get_current_frame()
+                    if frame is not None:
+                        zona = detectar_aruco_zona_segura(frame)
+                        if zona is not None:
+                            mensaje = f"SAFE_ZONE:{zona[0]},{zona[1]}"
+                            await websocket.send(mensaje.encode("utf-8"))
+                            print("Sent SAFE_ZONE coordinates")
+                        else:
+                            await websocket.send("SAFE_ZONE:NOT_FOUND".encode("utf-8"))
+                            print("No ArUco marker detected")
                     
                 elif message == "PROCESS_SAM":
 

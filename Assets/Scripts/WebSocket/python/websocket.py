@@ -5,7 +5,7 @@ import base64
 import cv2
 import mediapipe as mp
 
-video_capture = cv2.VideoCapture(1)
+video_capture = cv2.VideoCapture(0)
 video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 video_capture.set(cv2.CAP_PROP_FPS, 30)
