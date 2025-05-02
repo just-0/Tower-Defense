@@ -7,51 +7,175 @@ using System.Text;
 public class GestureReceiver : MonoBehaviour
 {
     [SerializeField] private RawImage gestureImage;
-
+    [SerializeField] private Text fingerCountText;
+    [SerializeField] private Slider holdProgressSlider;
+    [SerializeField] private Text phaseDisplayText;
+    
+    public SAMController SAM;
     private WebSocket websocket;
     private Texture2D receivedTexture;
+    
+    private const byte MESSAGE_TYPE_CAMERA_FRAME = 1;
+    private const byte MESSAGE_TYPE_FINGER_COUNT = 5;
 
-    // Clase interna solo para representar los datos
-    [Serializable]
-    private class GestureData
-    {
-        public int fingers;
-        public string image;
-    }
+    public enum GamePhase { Planning, Combat }
+    private GamePhase currentPhase = GamePhase.Planning;
+    
+    private int currentFingerCount = 0;
+    private int lastValidCount = 0;
+    private float holdTimer = 0f;
+    private bool actionTriggered = false;
+    private float cooldownTimer = 0f;
+    
+    private const float requiredHoldTime = 3f;
+    private const float cooldownDuration = 45f;
+    private const float phaseChangeCooldown = 2f;
 
     async void Start()
     {
-        websocket = new WebSocket("ws://localhost:8765");
+        receivedTexture = new Texture2D(2, 2);
+        websocket = new WebSocket("ws://localhost:8768");
 
-       websocket.OnMessage += (bytes) =>
-	{
-	    string json = Encoding.UTF8.GetString(bytes);
-	    GestureData data = JsonUtility.FromJson<GestureData>(json);
+        websocket.OnOpen += () => Debug.Log("Conexión abierta al servidor de rastreo de dedos");
+        websocket.OnError += (errorMsg) => Debug.LogError($"Error en WebSocket: {errorMsg}");
+        websocket.OnClose += (code) => Debug.Log($"Conexión cerrada con código: {code}");
+        
+        websocket.OnMessage += (bytes) => 
+        {
+            if (bytes.Length > 0)
+            {
+                byte messageType = bytes[0];
+                byte[] messageData = new byte[bytes.Length - 1];
+                Buffer.BlockCopy(bytes, 1, messageData, 0, bytes.Length - 1);
 
-	    // Imprimir el número de dedos detectados
-	    Debug.Log($"Dedos detectados: {data.fingers}");
-
-	    byte[] imageBytes = Convert.FromBase64String(data.image);
-
-	    if (receivedTexture == null)
-		receivedTexture = new Texture2D(2, 2);
-
-	    receivedTexture.LoadImage(imageBytes);
-	    gestureImage.texture = receivedTexture;
-	};
+                switch (messageType)
+                {
+                    case MESSAGE_TYPE_CAMERA_FRAME:
+                        ProcessCameraFrame(messageData);
+                        break;
+                    case MESSAGE_TYPE_FINGER_COUNT:
+                        ProcessFingerCount(messageData);
+                        break;
+                }
+            }
+        };
 
         await websocket.Connect();
+        UpdatePhaseDisplay();
     }
 
     void Update()
     {
-#if !UNITY_WEBGL || UNITY_EDITOR
-        websocket.DispatchMessageQueue();
-#endif
+    #if !UNITY_WEBGL || UNITY_EDITOR
+        websocket?.DispatchMessageQueue();
+    #endif
+
+        if (cooldownTimer > 0f)
+        {
+            cooldownTimer -= Time.deltaTime;
+            if (holdProgressSlider != null) holdProgressSlider.value = 0f;
+            return;
+        }
+
+        HandleGestureDetection();
+        UpdatePhaseDisplay();
     }
+
+    private void HandleGestureDetection()
+    {
+        bool validGesture = (currentPhase == GamePhase.Planning && currentFingerCount == 3) || 
+                          (currentPhase == GamePhase.Planning && currentFingerCount == 5);
+
+        if (validGesture)
+        {
+            holdTimer += Time.deltaTime;
+            
+            if (holdTimer >= requiredHoldTime && !actionTriggered)
+            {
+                actionTriggered = true;
+                holdTimer = 0f;
+                
+                if (currentFingerCount == 3)
+                {
+                    cooldownTimer = cooldownDuration;
+                    SAM.SendMessage("PROCESS_SAM");
+                }
+                else if (currentFingerCount == 5)
+                {
+                    currentPhase = GamePhase.Combat;
+                    cooldownTimer = phaseChangeCooldown;
+                }
+            }
+        }
+        else
+        {
+            holdTimer = Mathf.Max(0f, holdTimer - Time.deltaTime * 2);
+            actionTriggered = false;
+        }
+
+        if (holdProgressSlider != null)
+        {
+            holdProgressSlider.gameObject.SetActive(currentPhase == GamePhase.Planning);
+            holdProgressSlider.value = Mathf.Clamp(holdTimer / requiredHoldTime, 0f, 1f);
+        }
+    }
+
+    private void ProcessCameraFrame(byte[] imageData)
+    {
+        receivedTexture.LoadImage(imageData);
+        gestureImage.texture = receivedTexture;
+    }
+
+    private void ProcessFingerCount(byte[] jsonData)
+    {
+        string jsonStr = Encoding.UTF8.GetString(jsonData);
+        FingerCountData data = JsonUtility.FromJson<FingerCountData>(jsonStr);
+
+        UnityMainThreadDispatcher.Instance().Enqueue(() => 
+        {
+            if (data.count > 0) lastValidCount = data.count;
+            currentFingerCount = data.count;
+            
+            if (fingerCountText != null)
+                fingerCountText.text = $"Dedos: {lastValidCount} ({currentFingerCount})";
+                
+            if (currentPhase == GamePhase.Combat)
+                HandleCombatActions();
+        });
+    }
+
+    private void HandleCombatActions()
+    {
+        // Espacio para implementar lógica de combate
+        Debug.Log($"Acción de combate con {currentFingerCount} dedos");
+        
+        // Ejemplo básico:
+        switch (currentFingerCount)
+        {
+            case 1: Debug.Log("Arma 1 seleccionada"); break;
+            case 2: Debug.Log("Arma 2 seleccionada"); break;
+            case 3: Debug.Log("Arma 3 seleccionada"); break;
+            case 4: Debug.Log("Arma 4 seleccionada"); break;
+            case 5: Debug.Log("Habilidad especial"); break;
+        }
+    }
+
+    private void UpdatePhaseDisplay()
+    {
+        if (phaseDisplayText != null)
+        {
+            phaseDisplayText.text = currentPhase == GamePhase.Planning
+                ? $"Fase: Planificación\n3 dedos: Procesar SAM\n5 dedos: Ir a Combate\nProgreso: {(holdTimer/requiredHoldTime*100).ToString("0")}%"
+                : $"Fase: Combate\nDedos detectados: {currentFingerCount}";
+        }
+    }
+
+    [Serializable]
+    private class FingerCountData { public int count; }
 
     private async void OnApplicationQuit()
     {
-        await websocket.Close();
+        if (websocket != null && websocket.State == WebSocketState.Open)
+            await websocket.Close();
     }
 }
