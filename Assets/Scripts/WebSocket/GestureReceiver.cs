@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using NativeWebSocket;
 using System.Text;
+using UnityEngine.SceneManagement;
 
 public class GestureReceiver : MonoBehaviour
 {
@@ -31,6 +32,11 @@ public class GestureReceiver : MonoBehaviour
     private const float cooldownDuration = 45f;
     private const float phaseChangeCooldown = 2f;
 
+    [SerializeField] private float connectionTimeout = 5f;
+    private float connectionTimer = 0f;
+    private bool connectionChecked = false;
+    private bool fingerCameraConnected = false;
+
     async void Start()
     {
         receivedTexture = new Texture2D(2, 2);
@@ -38,7 +44,12 @@ public class GestureReceiver : MonoBehaviour
 
         websocket.OnOpen += () => Debug.Log("Conexión abierta al servidor de rastreo de dedos");
         websocket.OnError += (errorMsg) => Debug.LogError($"Error en WebSocket: {errorMsg}");
-        websocket.OnClose += (code) => Debug.Log($"Conexión cerrada con código: {code}");
+        websocket.OnClose += (code) => {
+            Debug.Log($"Conexión cerrada con código: {code}");
+            
+            // Marcar las cámaras como desconectadas
+            InitialSceneLoader.SetCamerasConnected(false);
+        };
         
         websocket.OnMessage += (bytes) => 
         {
@@ -52,9 +63,11 @@ public class GestureReceiver : MonoBehaviour
                 {
                     case MESSAGE_TYPE_CAMERA_FRAME:
                         ProcessCameraFrame(messageData);
+                        fingerCameraConnected = true;
                         break;
                     case MESSAGE_TYPE_FINGER_COUNT:
                         ProcessFingerCount(messageData);
+                        fingerCameraConnected = true;
                         break;
                 }
             }
@@ -69,6 +82,25 @@ public class GestureReceiver : MonoBehaviour
     #if !UNITY_WEBGL || UNITY_EDITOR
         websocket?.DispatchMessageQueue();
     #endif
+
+        // Verificar si la cámara de dedos está conectada
+        if (!connectionChecked)
+        {
+            connectionTimer += Time.deltaTime;
+            
+            if (connectionTimer >= connectionTimeout)
+            {
+                connectionChecked = true;
+                
+                // Si no se ha recibido ningún frame de la cámara de dedos después del timeout,
+                // redirigir a la escena de verificación de cámaras
+                if (!fingerCameraConnected)
+                {
+                    Debug.LogWarning("No se detectó conexión con la cámara de dedos. Redirigiendo a la escena de verificación.");
+                    SceneManager.LoadScene("CameraVerification");
+                }
+            }
+        }
 
         if (cooldownTimer > 0f)
         {
@@ -104,6 +136,8 @@ public class GestureReceiver : MonoBehaviour
                 {
                     currentPhase = GamePhase.Combat;
                     cooldownTimer = phaseChangeCooldown;
+                    SAM.SendMessage("START_COMBAT"); // Nuevo mensaje
+
                 }
             }
         }
@@ -147,17 +181,9 @@ public class GestureReceiver : MonoBehaviour
     private void HandleCombatActions()
     {
         // Espacio para implementar lógica de combate
-        Debug.Log($"Acción de combate con {currentFingerCount} dedos");
+       // Debug.Log($"Acción de combate con {currentFingerCount} dedos");
         
-        // Ejemplo básico:
-        switch (currentFingerCount)
-        {
-            case 1: Debug.Log("Arma 1 seleccionada"); break;
-            case 2: Debug.Log("Arma 2 seleccionada"); break;
-            case 3: Debug.Log("Arma 3 seleccionada"); break;
-            case 4: Debug.Log("Arma 4 seleccionada"); break;
-            case 5: Debug.Log("Habilidad especial"); break;
-        }
+       
     }
 
     private void UpdatePhaseDisplay()

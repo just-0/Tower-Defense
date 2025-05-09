@@ -77,8 +77,10 @@ def astar(mask, debug=False):
         plt.axis('off')
         plt.show()
         
+        print("2 Imagen de debug")
         # Guardar imagen
         cv2.imwrite("astar_debug.png", debug_img)
+        
         print("Imagen de debug guardada como 'astar_debug.png'")
     
     return path
@@ -99,8 +101,8 @@ def handle_astar_from_mask(mask_bytes, debug=False):
     _, binary_mask = cv2.threshold(mask_image, 127, 1, cv2.THRESH_BINARY_INV)
 
     # Calcular A* con modo debug
+    
     path = astar(binary_mask, debug=debug)
-
     if not path:
         print("No se encontró camino con A*.")
         return None

@@ -1,0 +1,127 @@
+# Instrucciones para configurar la escena de verificación de cámaras
+
+## 1. Crear la escena
+- Crea una nueva escena en Unity y guárdala como "CameraVerification"
+- Asegúrate de añadirla a Build Settings como la primera escena
+
+## 2. Estructura básica de la escena
+- Añade un Canvas principal (UI > Canvas)
+  - Configúralo como Screen Space - Overlay
+  - Establece la resolución de referencia a 1920x1080
+  - Añade un Canvas Scaler (UI Scale Mode: Scale With Screen Size)
+
+## 3. Fondo negro
+- Añade un Panel como hijo del Canvas (UI > Panel)
+  - Renómbralo a "BackgroundPanel"
+  - Establece su color a negro (RGBA: 0, 0, 0, 1)
+  - Asegúrate de que cubre toda la pantalla (Anchors: Stretch-Stretch)
+
+## 4. Paneles de cámara
+- Crea dos paneles para las cámaras:
+  
+  ### Panel de cámara principal:
+  - Añade un Panel (UI > Panel)
+  - Renómbralo a "MainCameraPanel"
+  - Posiciónalo en la mitad izquierda de la pantalla
+  - Tamaño sugerido: 800x600
+  - Añade un RawImage como hijo (UI > Raw Image)
+    - Renómbralo a "MainCameraDisplay"
+    - Ajusta su tamaño para que llene el panel
+  - Añade un objeto vacío como hijo del panel
+    - Renómbralo a "MainCameraDisconnectedEffect"
+    - Añade el componente DisconnectedCameraEffect
+    - Configura sus referencias (cameraDisplay, statusText)
+  - Añade un círculo como indicador de estado (UI > Image)
+    - Renómbralo a "MainCameraStatus"
+    - Usa un sprite circular
+    - Posiciónalo en una esquina del panel
+    - Tamaño: 50x50
+    - Color inicial: rojo (RGBA: 1, 0, 0, 1)
+  - Añade un icono de advertencia (UI > Image)
+    - Renómbralo a "MainCameraWarningIcon"
+    - Usa un sprite de advertencia/exclamación
+    - Asígnalo al warningIcon en el DisconnectedCameraEffect
+
+  ### Panel de cámara de dedos:
+  - Añade un Panel (UI > Panel)
+  - Renómbralo a "FingerCameraPanel"
+  - Posiciónalo en la mitad derecha de la pantalla
+  - Tamaño sugerido: 800x600
+  - Añade un RawImage como hijo (UI > Raw Image)
+    - Renómbralo a "FingerCameraDisplay"
+    - Ajusta su tamaño para que llene el panel
+  - Añade un objeto vacío como hijo del panel
+    - Renómbralo a "FingerCameraDisconnectedEffect"
+    - Añade el componente DisconnectedCameraEffect
+    - Configura sus referencias (cameraDisplay, statusText)
+  - Añade un círculo como indicador de estado (UI > Image)
+    - Renómbralo a "FingerCameraStatus"
+    - Usa un sprite circular
+    - Posiciónalo en una esquina del panel
+    - Tamaño: 50x50
+    - Color inicial: rojo (RGBA: 1, 0, 0, 1)
+  - Añade un icono de advertencia (UI > Image)
+    - Renómbralo a "FingerCameraWarningIcon"
+    - Usa un sprite de advertencia/exclamación
+    - Asígnalo al warningIcon en el DisconnectedCameraEffect
+
+## 5. Textos informativos
+- Añade un texto de estado general (UI > Text)
+  - Renómbralo a "StatusText"
+  - Posiciónalo en la parte superior de la pantalla
+  - Texto inicial: "Esperando conexión de ambas cámaras..."
+  - Tamaño de fuente: 36
+  - Color: rojo (RGBA: 1, 0, 0, 1)
+  - Alineación: centro
+
+- Añade un texto para la cuenta regresiva (UI > Text)
+  - Renómbralo a "CountdownText"
+  - Posiciónalo en la parte central inferior de la pantalla
+  - Texto inicial: "Iniciando juego en: 20"
+  - Tamaño de fuente: 48
+  - Color: naranja (RGBA: 1, 0.6, 0, 1)
+  - Alineación: centro
+  - Inicialmente desactivado (SetActive(false))
+
+## 6. Animaciones
+- Añade el componente CameraConnectionAnimation a los indicadores de estado
+  - MainCameraStatus
+  - FingerCameraStatus
+
+## 7. Controlador principal
+- Añade un objeto vacío a la escena
+  - Renómbralo a "CameraVerificationController"
+  - Añade el componente CameraVerificationScene
+  - Configura todas las referencias:
+    - mainServerUrl: ws://localhost:8767
+    - fingerTrackingServerUrl: ws://localhost:8768
+    - mainCameraDisplay: Referencia al MainCameraDisplay
+    - fingerCameraDisplay: Referencia al FingerCameraDisplay
+    - mainCameraStatus: Referencia al MainCameraStatus
+    - fingerCameraStatus: Referencia al FingerCameraStatus
+    - statusText: Referencia al StatusText
+    - countdownText: Referencia al CountdownText
+    - backgroundPanel: Referencia al BackgroundPanel
+    - autoStartCountdown: 20 (para debug)
+    - mainGameSceneName: "MainGame" (o el nombre de tu escena principal)
+
+## 8. Configuración adicional
+- Asegúrate de que la cámara principal de la escena tiene un fondo negro
+- Verifica que todos los elementos UI son visibles en la vista de juego
+- Comprueba que los scripts tienen todas sus referencias asignadas correctamente
+
+## 9. Pruebas
+- Ejecuta la escena y verifica que:
+  - El fondo es negro
+  - Se muestran los dos paneles de cámara
+  - Los indicadores de estado son rojos inicialmente
+  - El texto de estado muestra el mensaje correcto
+  - Los efectos de DisconnectedCameraEffect se muestran correctamente
+  - Cuando las cámaras se conectan, los indicadores cambian a verde
+  - Cuando ambas cámaras están conectadas, comienza la cuenta regresiva
+  - Si una cámara se desconecta, la cuenta regresiva se detiene
+  - Después de 20 segundos con ambas cámaras conectadas, se carga la escena principal
+
+## 10. Integración con la escena principal
+- Asegúrate de que la escena principal ("MainGame") existe y está configurada correctamente
+- Verifica que la transición entre escenas funciona correctamente 
