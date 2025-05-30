@@ -111,24 +111,53 @@ def mask_to_png_bytes(mask):
     mask_pil.save(buffer_mask, format="PNG")
     return buffer_mask.getvalue()
 
-def encode_frame_to_jpeg(frame):
+def encode_frame_to_jpeg(frame, quality=None):
     """
     Encode a frame to JPEG bytes.
     
     Args:
         frame (numpy.ndarray): Frame to encode
+        quality (int, optional): JPEG quality (0-100). If None, uses JPEG_QUALITY from settings.
         
     Returns:
         tuple: (success (bool), encoded_bytes (bytes))
     """
-    # Convert to BGR for OpenCV encoding
-    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-    success, encoded_frame = cv2.imencode(
-        '.jpg', 
-        frame_bgr, 
-        [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
-    )
-    
-    if success:
-        return success, encoded_frame.tobytes()
-    return False, None
+    # Verificar que frame sea válido
+    if frame is None or not isinstance(frame, np.ndarray) or frame.size == 0:
+        return False, None
+        
+    try:
+        # Si el frame ya está en BGR, no necesitamos convertirlo
+        if frame.shape[2] == 3:  # Solo si tiene 3 canales
+            if len(frame.shape) == 3 and frame.dtype == np.uint8:
+                # Determinar si es BGR o RGB verificando colores típicos
+                # Esta es una heurística simple: asumimos RGB si hay más rojo que azul en promedio
+                # ya que en imágenes naturales suele haber más rojo que azul
+                if np.mean(frame[:,:,0]) > np.mean(frame[:,:,2]):
+                    # Probablemente ya está en BGR, no necesitamos convertir
+                    frame_bgr = frame
+                else:
+                    # Probablemente está en RGB, convertir a BGR
+                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            else:
+                # Si no es uint8, convertir
+                frame_bgr = cv2.cvtColor(frame.astype(np.uint8), cv2.COLOR_RGB2BGR)
+        else:
+            # No es una imagen de 3 canales, intentar conversión estándar
+            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            
+        # Usar calidad personalizada o la configurada
+        jpeg_quality = quality if quality is not None else JPEG_QUALITY
+        
+        success, encoded_frame = cv2.imencode(
+            '.jpg', 
+            frame_bgr, 
+            [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]
+        )
+        
+        if success:
+            return success, encoded_frame.tobytes()
+        return False, None
+    except Exception as e:
+        print(f"Error al codificar imagen: {e}")
+        return False, None

@@ -8,13 +8,16 @@ import json
 import threading
 import cv2
 import time
+import numpy as np
+import queue
 
 from utils.camera import CameraManager
 from utils.image_processings import encode_frame_to_jpeg
 from utils.finger_tracking import FingerCounter
-from models.sam_model import SAMProcessor
+from models.sam_model import SAMProcessor 
 from utils.pathfinding import handle_astar_from_mask
 from models.finger_pointer import GridSystem, FingerPositionDetector
+from models.aruco import ArucoDetector
 
 from config.settings import (
     WEBSOCKET_HOST, WEBSOCKET_PORT, FINGER_TRACKING_PORT, TRANSMISSION_FPS,
@@ -246,9 +249,29 @@ class WebSocketServer:
         frame = camera_manager.get_current_frame()
         if frame is None:
             return
+
+        # --- DETECCIÓN ARUCO PRIMERO ---
+        if frame.shape[2] == 3:
+            frame_bgr_for_aruco = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        else:
+            frame_bgr_for_aruco = frame # Asumir que ya está en BGR si no es RGB
+        
+        aruco_detector = ArucoDetector()
+        # Obtener ids, centros y MUY IMPORTANTE: corners
+        ids, centers, aruco_corners, _ = aruco_detector.detect(frame_bgr_for_aruco, draw=False)
+        
+        goal = None
+        if centers and len(centers) > 0:
+            cx, cy = centers[0]
+            goal = (int(cy), int(cx))
+            print(f"Destino ARUCO detectado en: {goal}")
+        else:
+            print("No se detectó ARUCO, usando destino por defecto (extremo izquierdo)")
+        # --- FIN DETECCIÓN ARUCO ---
             
-        # Process the frame with SAM
-        mask_bytes = sam_processor.process_image(frame)
+        # Procesar el frame con SAM, pasando los corners del ArUco
+        # El frame original para SAM debe ser RGB
+        mask_bytes = sam_processor.process_image(frame, scene_type="pared", aruco_corners=aruco_corners)
         if not mask_bytes:
             return
             
@@ -257,7 +280,7 @@ class WebSocketServer:
         print("Sent mask data")
         
         # Process and send A* path
-        path = handle_astar_from_mask(mask_bytes, False)
+        path = handle_astar_from_mask(mask_bytes, False, goal=goal)
         if path:
             path_data = [{"x": x, "y": y} for x, y in path]
             path_json = json.dumps(path_data)
@@ -284,28 +307,31 @@ class WebSocketServer:
         """Handle the combat mode with finger detection."""
         cap = None
         try:
-            print(f"DEBUG-CAMERA: Intentando abrir cámara con índice {CAMERA_INDEX}")
-            # Abrir cámara para modo combate
+            print(f"INFO: Iniciando modo combate, abriendo cámara con índice {CAMERA_INDEX}")
+            # Abrir cámara para modo combate y probar opciones avanzadas para mayor rendimiento
             cap = cv2.VideoCapture(CAMERA_INDEX)
+            
+            # Intentar configurar el backend para mejor rendimiento
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))  # Usar MJPG para mayor velocidad
             
             # Verificar si la cámara está abierta
             if not cap.isOpened():
-                print(f"ERROR-CAMERA: No se pudo abrir la cámara {CAMERA_INDEX}")
-                # Intentar con otros índices de cámara
-                for test_index in range(3):  # Probar con índices 0, 1, 2
+                print(f"ERROR: No se pudo abrir la cámara {CAMERA_INDEX}")
+                for test_index in range(3):
                     if test_index == CAMERA_INDEX:
                         continue
-                    print(f"DEBUG-CAMERA: Intentando con cámara alternativa {test_index}")
+                    print(f"INFO: Intentando con cámara alternativa {test_index}")
                     cap = cv2.VideoCapture(test_index)
+                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                     if cap.isOpened():
-                        print(f"DEBUG-CAMERA: Cámara {test_index} abierta con éxito")
+                        print(f"INFO: Cámara {test_index} abierta con éxito")
                         break
                 
                 if not cap.isOpened():
-                    print("ERROR-CAMERA: No se pudo abrir ninguna cámara")
+                    print("ERROR: No se pudo abrir ninguna cámara")
                     return
                 
-            # Configurar la cámara
+            # Configurar la cámara con resolución óptima para equilibrar rendimiento y detección
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
             cap.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
@@ -315,109 +341,223 @@ class WebSocketServer:
             actual_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
             actual_fps = cap.get(cv2.CAP_PROP_FPS)
             
-            print(f"DEBUG-CAMERA: Modo combate iniciado con cámara {CAMERA_INDEX}")
-            print(f"DEBUG-CAMERA: Configuración solicitada: {CAMERA_WIDTH}x{CAMERA_HEIGHT} @ {CAMERA_FPS}fps")
-            print(f"DEBUG-CAMERA: Configuración real: {actual_width}x{actual_height} @ {actual_fps}fps")
+            print(f"INFO: Modo combate iniciado con cámara configurada a {actual_width}x{actual_height} @ {actual_fps}fps")
             
-            # Variables para control de frames
-            retry_count = 0
+            # Utilizar una cola thread-safe en lugar de un lock y un buffer
+            frame_queue = queue.Queue(maxsize=2)  # Limitar a 2 frames para evitar acumulación
+            stop_event = threading.Event()
+            
+            # Precalentar la cámara para evitar delays iniciales
+            for _ in range(5):
+                cap.read()
+                
+            # Función para capturar frames en un hilo separado sin usar asyncio
+            def capture_frames():
+                try:
+                    local_cap = cap  # Crear una referencia local
+                    retry_count = 0
+                    
+                    while not stop_event.is_set():
+                        try:
+                            if local_cap is None or not local_cap.isOpened():
+                                # Si la cámara no está abierta, intentar reiniciar
+                                if local_cap is not None:
+                                    local_cap.release()
+                                local_cap = cv2.VideoCapture(CAMERA_INDEX)
+                                local_cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                                local_cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+                                local_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
+                                local_cap.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
+                                
+                                if not local_cap.isOpened():
+                                    print("ERROR: No se pudo abrir la cámara, reintentando...")
+                                    time.sleep(1.0)
+                                    continue
+                            
+                            ret, frame = local_cap.read()
+                            
+                            if not ret:
+                                retry_count += 1
+                                if retry_count >= 5:
+                                    print("ERROR: Fallo de cámara, reiniciando...")
+                                    time.sleep(0.5)
+                                    # Reiniciar la cámara
+                                    if local_cap.isOpened():
+                                        local_cap.release()
+                                    local_cap = cv2.VideoCapture(CAMERA_INDEX)
+                                    local_cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                                    local_cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+                                    local_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
+                                    local_cap.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
+                                    retry_count = 0
+                                time.sleep(0.1)
+                                continue
+                            
+                            retry_count = 0
+                            
+                            # Verificar frame válido
+                            if frame is None or frame.size == 0 or frame.shape[0] <= 0 or frame.shape[1] <= 0 or frame.shape[2] != 3:
+                                continue
+                            
+                            # Poner el frame en la cola, reemplazando el anterior si está llena
+                            try:
+                                # Si la cola está llena, eliminar el frame más antiguo
+                                if frame_queue.full():
+                                    try:
+                                        frame_queue.get_nowait()
+                                    except queue.Empty:
+                                        pass
+                                
+                                # Poner el nuevo frame en la cola
+                                frame_queue.put(frame, block=False)
+                            except queue.Full:
+                                # Si aún así no se puede poner, simplemente continuar
+                                pass
+                            
+                            # Control de velocidad para no saturar
+                            time.sleep(1.0 / (CAMERA_FPS * 1.2))
+                        
+                        except Exception as e:
+                            print(f"ERROR: Error en captura: {str(e)}")
+                            import traceback
+                            traceback.print_exc()
+                            time.sleep(0.5)
+                            
+                except Exception as e:
+                    print(f"ERROR: Captura general: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                finally:
+                    # Asegurar que la cámara se libere si hay error
+                    try:
+                        if local_cap is not None and local_cap.isOpened():
+                            local_cap.release()
+                    except:
+                        pass
+            
+            # Iniciar thread de captura
+            capture_thread = threading.Thread(target=capture_frames, daemon=True)
+            capture_thread.start()
+            
+            # Bucle principal para procesar frames en el hilo de asyncio
             frame_count = 0
+            total_frames = 0
+            last_fps_time = time.time()
+            last_position_send_time = 0
+            grid_position_cache = None
             
-            # Bucle principal de procesamiento
-            print("DEBUG-CAMERA: Iniciando bucle de procesamiento de frames")
-            last_debug_time = time.time()
-            
-            while True:
+            while not stop_event.is_set():
                 current_time = time.time()
                 
-                # Leer frame de la cámara
-                ret, frame = cap.read()
-                if not ret:
-                    retry_count += 1
-                    print(f"ERROR-CAMERA: No se pudo leer frame, intento {retry_count}/5")
-                    if retry_count >= 5:
-                        # Reintentar con la cámara
-                        print("DEBUG-CAMERA: Intentando reiniciar la cámara")
-                        cap.release()
-                        cap = cv2.VideoCapture(CAMERA_INDEX)
-                        if not cap.isOpened():
-                            print("ERROR-CAMERA: No se pudo reiniciar la cámara.")
-                            return
-                        cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
-                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-                        retry_count = 0
-                    await asyncio.sleep(0.1)
+                # Intentar obtener un frame de la cola
+                frame = None
+                try:
+                    # Usar una espera corta para reducir CPU
+                    frame = frame_queue.get(block=True, timeout=0.01)
+                except queue.Empty:
+                    # Si no hay frame disponible, esperar un poco y reintentar
+                    await asyncio.sleep(0.005)  # Espera muy corta para ser responsivo
                     continue
                 
-                # Frame leído correctamente
-                retry_count = 0
-                frame_count += 1
+                # Incrementar contador total de frames
+                total_frames += 1
                 
-                # Mostrar información cada segundo
-                if current_time - last_debug_time > 1.0:
-                    print(f"DEBUG-CAMERA: Procesados {frame_count} frames. Tamaño del frame: {frame.shape}")
-                    last_debug_time = current_time
+                # Solo procesar cada N frames si estamos por encima de cierto FPS 
+                # para evitar sobrecarga en sistemas lentos
+                if total_frames % 2 != 0 and frame_count / (current_time - last_fps_time + 0.001) > 25:
+                    continue  # Saltar este frame
                 
+                # Procesar el frame
                 try:
-                    # Convertir a RGB para procesamiento
-                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    # Procesamiento básico para detección de manos
+                    adjusted_frame = cv2.convertScaleAbs(frame, alpha=1.2, beta=10)
+                    frame_rgb = cv2.cvtColor(adjusted_frame, cv2.COLOR_BGR2RGB)
                     
                     # Procesar frame para detección de dedos
                     output_image, current_position, is_confirmed, selected_cell = finger_detector.process_frame(frame_rgb)
                     
-                    # Enviar posición si se está apuntando
-                    if finger_detector.is_pointing and finger_detector.current_cell:
-                        row, col = finger_detector.current_cell
-                        center = finger_detector.grid_system.get_cell_center(row, col)
-                        if center:
-                            # Una celda es válida si NO está ocupada
-                            is_valid = not finger_detector.grid_system.is_cell_occupied(row, col)
-                            grid_data = {
-                                "x": center[0],
-                                "y": center[1],
-                                "valid": is_valid
-                            }
-                            print(f"DEBUG-WEBSOCKET: Enviando posición de cuadrícula: ({center[0]}, {center[1]}), válida: {is_valid}, tipo: {MESSAGE_TYPE_GRID_POSITION}")
-                            # Convertir a JSON y mostrar para depuración
-                            json_data = json.dumps(grid_data)
-                            print(f"DEBUG-WEBSOCKET: JSON enviado: {json_data}")
-                            try:
-                                await websocket.send(bytes([MESSAGE_TYPE_GRID_POSITION]) + 
-                                                   json_data.encode('utf-8'))
-                                print(f"DEBUG-WEBSOCKET: Mensaje enviado correctamente")
-                            except Exception as e:
-                                print(f"ERROR-WEBSOCKET: Error al enviar mensaje: {e}")
-                    
-                    # Debug para posición estable
-                    if current_position and finger_detector.is_pointing:
-                        is_stable = finger_detector.is_position_stable(current_position)
-                        if is_stable:
-                            print(f"DEBUG: Posición estable detectada: {current_position}, tiempo: {finger_detector.start_time}")
-                        
-                    # Debug para confirmación
-                    if is_confirmed and selected_cell:
-                        print(f"DEBUG: ¡CELDA CONFIRMADA! {selected_cell}")
-                    
-                    # Enviar frame procesado a Unity
-                    success, encoded_frame = encode_frame_to_jpeg(output_image)
+                    # Enviar frame procesado lo antes posible para mantener fluidez visual
+                    success, encoded_frame = encode_frame_to_jpeg(output_image, quality=85)
                     if success:
                         await websocket.send(bytes([MESSAGE_TYPE_CAMERA_FRAME]) + encoded_frame)
                     
-                        
+                    # Gestión de alta frecuencia para envío de posiciones
+                    position_interval = 1.0 / 30.0  # 30 actualizaciones por segundo máximo
+                    should_send_position = (
+                        finger_detector.is_pointing and 
+                        finger_detector.current_cell and
+                        current_time - last_position_send_time > position_interval
+                    )
+                    
+                    if should_send_position:
+                        row, col = finger_detector.current_cell
+                        center = finger_detector.grid_system.get_cell_center(row, col)
+                        if center:
+                            is_valid = not finger_detector.grid_system.is_cell_occupied(row, col)
+                            
+                            # Serialización eficiente
+                            x = float(center[0]) if not isinstance(center[0], (int, float)) else center[0]
+                            y = float(center[1]) if not isinstance(center[1], (int, float)) else center[1]
+                            
+                            # Caché de posiciones para evitar duplicados
+                            current_data_str = f"{x:.1f}_{y:.1f}_{is_valid}"
+                            if grid_position_cache != current_data_str:
+                                grid_position_cache = current_data_str
+                                
+                                # Preparar JSON compacto
+                                grid_data = {"x": x, "y": y, "valid": bool(is_valid)}
+                                json_data = json.dumps(grid_data)
+                                
+                                # Enviar posición a Unity
+                                await websocket.send(bytes([MESSAGE_TYPE_GRID_POSITION]) + 
+                                                   json_data.encode('utf-8'))
+                                last_position_send_time = current_time
+                    
+                    # Notificar confirmaciones
+                    if is_confirmed and selected_cell:
+                        print(f"INFO: Celda confirmada: {selected_cell}")
+                    
+                    # Métricas de rendimiento
+                    frame_count += 1
+                    if current_time - last_fps_time > 5.0:
+                        fps = frame_count / (current_time - last_fps_time)
+                        print(f"INFO: Procesamiento FPS: {fps:.2f}, Frames totales: {total_frames}")
+                        frame_count = 0
+                        total_frames = 0
+                        last_fps_time = current_time
+                    
                 except Exception as e:
-                    print(f"Error procesando frame: {e}")
+                    print(f"ERROR: Procesamiento: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
                 
-                # Control de velocidad
-                await asyncio.sleep(1/TRANSMISSION_FPS)
-                
-        except (websockets.exceptions.ConnectionClosed, asyncio.CancelledError):
-            print("Modo combate detenido")
+                # Control de velocidad adaptativo - solo esperar si vamos muy rápido
+                process_time = time.time() - current_time
+                target_frame_time = 1.0 / 60.0  # Apuntar a 60 FPS máximo
+                if process_time < target_frame_time:
+                    sleep_time = target_frame_time - process_time
+                    await asyncio.sleep(max(0.001, sleep_time))
+            
+        except asyncio.CancelledError:
+            print("INFO: Modo combate detenido")
         except Exception as e:
-            print(f"Error en modo combate: {e}")
+            print(f"ERROR: Error general en modo combate: {str(e)}")
+            import traceback
+            traceback.print_exc()
         finally:
-            # Liberar recursos
-            if cap is not None and cap.isOpened():
-                cap.release()
+            # Limpiar recursos
+            try:
+                if 'stop_event' in locals():
+                    stop_event.set()
+                
+                if cap is not None and cap.isOpened():
+                    cap.release()
+                
+                print("INFO: Recursos de modo combate liberados")
+            except Exception as e:
+                print(f"ERROR: Error al liberar recursos: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 
     def cleanup(self):
         """Clean up resources when shutting down."""

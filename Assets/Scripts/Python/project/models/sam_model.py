@@ -13,7 +13,8 @@ from utils.image_processings import (
 )
 from config.settings import (
     MODEL_TYPE, MODEL_CHECKPOINT, 
-    POINTS_PER_SIDE, PRED_IOU_THRESH, STABILITY_SCORE_THRESH,
+    POINTS_PER_SIDE, PRED_IOU_THRESH as CFG_PRED_IOU_THRESH,
+    STABILITY_SCORE_THRESH as CFG_STABILITY_SCORE_THRESH,
     CROP_N_LAYERS, CROP_N_POINTS_DOWNSCALE_FACTOR, MIN_MASK_REGION_AREA,
     DEBUG_INPUT_IMAGE, DEBUG_MASK_FINAL, MIN_BLACK_RATIO, MAX_BLACK_RATIO
 )
@@ -28,27 +29,30 @@ class SAMProcessor:
         """Initialize the SAM model."""
         print("Initializing Mobile SAM model...")
         
-        # Set the device based on availability
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {self.device}")
 
-        # Load the model
         self.sam = sam_model_registry[MODEL_TYPE](checkpoint=MODEL_CHECKPOINT)
         self.sam.to(device=self.device)
         
-        # Initialize the mask generator with configured settings
+        # Optimized parameters for better obstacle detection on walls
+        current_pred_iou_thresh = 0.85 
+        current_stability_score_thresh = 0.90
+        
+        print(f"Using SAM params: PRED_IOU_THRESH={current_pred_iou_thresh}, STABILITY_SCORE_THRESH={current_stability_score_thresh}")
+        
         self.mask_generator = SamAutomaticMaskGenerator(
             self.sam,
             points_per_side=POINTS_PER_SIDE,
-            pred_iou_thresh=PRED_IOU_THRESH,
-            stability_score_thresh=STABILITY_SCORE_THRESH,
+            pred_iou_thresh=current_pred_iou_thresh,
+            stability_score_thresh=current_stability_score_thresh,
             crop_n_layers=CROP_N_LAYERS,
             crop_n_points_downscale_factor=CROP_N_POINTS_DOWNSCALE_FACTOR,
             min_mask_region_area=MIN_MASK_REGION_AREA,
         )
         print("Mobile SAM model initialized.")
 
-    def process_image(self, image, scene_type="pared", hand_points=None):
+    def process_image(self, image, scene_type="pared", hand_points=None, aruco_corners=None):
         """
         Process an image to generate object masks with scene-specific optimizations.
         
@@ -56,6 +60,8 @@ class SAMProcessor:
             image (numpy.ndarray): Input image in RGB format
             scene_type (str): Either "wall" or "table" to specify the scenario
             hand_points (list, optional): List of [x, y] coordinates for guided segmentation
+            aruco_corners (list, optional): List of corner coordinates for ArUco markers.
+                                          Each element is an array of shape (1, 4, 2) for a marker.
             
         Returns:
             bytes: PNG encoded binary mask or None if processing failed
@@ -87,6 +93,11 @@ class SAMProcessor:
         else:
             combined_mask = self._process_wall_masks(masks, h, w, image)
         
+        # Clear ArUco marker areas from the mask
+        if aruco_corners is not None and combined_mask is not None:
+            combined_mask = self._clear_aruco_area_from_mask(combined_mask, aruco_corners)
+            print("Cleared ArUco areas from mask.")
+
         # Validate the final mask
         is_valid, black_ratio = validate_mask(combined_mask, MIN_BLACK_RATIO, MAX_BLACK_RATIO)
         if not is_valid:
@@ -100,32 +111,67 @@ class SAMProcessor:
         # Convert to PNG bytes
         return mask_to_png_bytes(combined_mask)
 
+    def _clear_aruco_area_from_mask(self, mask, aruco_corners):
+        """
+        Clears the areas occupied by ArUco markers from the segmentation mask.
+        Args:
+            mask (numpy.ndarray): The combined binary mask (0 for obstacle, 255 for free).
+            aruco_corners (list): List of corner coordinates for ArUco markers.
+                                  Each element is an array of shape (1, 4, 2) from cv2.aruco.detectMarkers.
+        Returns:
+            numpy.ndarray: The mask with ArUco areas cleared (set to 255).
+        """
+        if aruco_corners is None or len(aruco_corners) == 0:
+            return mask
+
+        # Create a copy to modify
+        cleared_mask = mask.copy()
+
+        for corners in aruco_corners:
+            # Corners from detectMarkers are float, convert to int for drawing
+            pts = np.array(corners[0], dtype=np.int32)
+            # Fill the polygon defined by ArUco corners with white (255 - free space)
+            cv2.fillPoly(cleared_mask, [pts], 255)
+        
+        return cleared_mask
+
     def _preprocess_wall_scene(self, image):
         """
         Preprocess image for wall scenario.
         For walls, we enhance contrast to make objects stand out.
         
         Args:
-            image (numpy.ndarray): Original image
+            image (numpy.ndarray): Original image in RGB format
             
         Returns:
-            numpy.ndarray: Preprocessed image
+            numpy.ndarray: Preprocessed image in RGB format
         """
-        # Apply basic enhancement
-        enhanced = enhance_image(image)
+        # 1. Usar la función de realce genérica si existe y es beneficiosa
+        # (Asumiendo que enhance_image devuelve RGB si la entrada es RGB)
+        enhanced_initial = enhance_image(image) 
+
+        # 2. Convertir a Lab para trabajar con el canal de Luminosidad (L)
+        lab_image = cv2.cvtColor(enhanced_initial, cv2.COLOR_RGB2Lab)
+        l_channel, a_channel, b_channel = cv2.split(lab_image)
+
+        # 3. Aplicar CLAHE al canal L para mejorar el contraste
+        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8)) # clipLimit un poco más alto
+        cl_channel = clahe.apply(l_channel)
+
+        # 4. Unir los canales de nuevo y convertir de vuelta a RGB
+        updated_lab_image = cv2.merge((cl_channel, a_channel, b_channel))
+        contrasted_rgb_image = cv2.cvtColor(updated_lab_image, cv2.COLOR_Lab2RGB)
+
+        # 5. Aplicar filtro bilateral para suavizar ruido después del realce de contraste,
+        #    manteniendo los bordes nítidos.
+        #    Los parámetros (d, sigmaColor, sigmaSpace) pueden necesitar ajuste.
+        #    d: Diámetro del vecindario de cada píxel. Valores más grandes significan más desenfoque.
+        #    sigmaColor: Filtra colores similares. Valores más grandes influyen en más colores.
+        #    sigmaSpace: Filtra píxeles cercanos. Valores más grandes influyen en píxeles más lejanos.
+        bilateral_filtered_rgb = cv2.bilateralFilter(contrasted_rgb_image, d=7, sigmaColor=75, sigmaSpace=75)
+        # Aumenté un poco sigmaColor y sigmaSpace para un suavizado más fuerte si el contraste introdujo artefactos.
         
-        # Additional processing for wall scenes
-        # Convert to HSV to better handle lighting variations
-        hsv = cv2.cvtColor(enhanced, cv2.COLOR_RGB2HSV)
-        
-        # Apply adaptive histogram equalization to the V channel
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        hsv[:,:,2] = clahe.apply(hsv[:,:,2])
-        
-        # Convert back to RGB
-        enhanced = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
-        
-        return enhanced
+        return bilateral_filtered_rgb
 
     def _preprocess_table_scene(self, image):
         """
@@ -201,66 +247,96 @@ class SAMProcessor:
         """
         return self.mask_generator.generate(image)
 
-    def _process_wall_masks(self, masks, height, width, original_image):
+    def _process_wall_masks(self, masks, height, width, original_image_rgb):
         """
         Combine masks for wall scenario.
         For walls, we prioritize smaller, distinct objects.
         
         Args:
-            masks (list): List of mask data dictionaries
+            masks (list): List of mask data dictionaries from SAM
             height (int): Image height
             width (int): Image width
-            original_image (numpy.ndarray): Original input image
+            original_image_rgb (numpy.ndarray): Original input image in RGB format
             
         Returns:
-            numpy.ndarray: Combined binary mask
+            numpy.ndarray: Combined binary mask (0 for obstacle, 255 for free)
         """
-        # Start with a white (255) background
-        combined_mask = np.ones((height, width), dtype=np.uint8) * 255
+        combined_mask = np.ones((height, width), dtype=np.uint8) * 255 # Initialize as all free space
         
-        # For wall scenes, we prioritize distinct objects
-        # Sort masks by stability score (if available) or area
+        if not masks: # Si SAM no devuelve ninguna máscara
+            print("SAM returned no masks. Using fallback.")
+            return self._generate_fallback_mask(original_image_rgb, "pared")
+
+        # Ordenar máscaras: por estabilidad si está disponible, si no, por área (más grandes primero)
+        # A menudo, las máscaras más estables o más grandes son las más relevantes.
         if 'stability_score' in masks[0]:
-            masks = sorted(masks, key=lambda x: x.get('stability_score', 0), reverse=True)
+            sorted_masks = sorted(masks, key=lambda x: x.get('stability_score', 0), reverse=True)
         else:
-            masks = sorted(masks, key=lambda x: x['area'])  # Smaller objects first for wall scenes
+            # Si no hay 'stability_score', ordenar por área puede ser una alternativa.
+            # Considerar que para objetos en una pared, el área podría no ser el mejor indicador único.
+            # No obstante, es un fallback razonable si 'stability_score' no está presente.
+            sorted_masks = sorted(masks, key=lambda x: x['area'], reverse=True) 
         
-        # Filter masks by their properties
-        valid_masks = []
-        for mask_data in masks:
-            mask = mask_data['segmentation'].astype(np.uint8)
-            mask_area = np.sum(mask)
-            area_ratio = mask_area / (height * width)
+        # Parámetros de filtrado de máscaras ajustados
+        min_area_ratio_threshold = 0.0002  # Reducido para capturar objetos más pequeños (0.02% del área total)
+        min_absolute_pixel_area_threshold = 100 # Reducido para objetos con al menos 100 píxeles
+        max_area_ratio_threshold = 0.20    # MUY Reducido para descartar máscaras muy grandes (probablemente la pared)
+
+        valid_masks_segments = []
+
+        for mask_data in sorted_masks:
+            segmentation_mask = mask_data['segmentation'].astype(np.uint8)
+            current_mask_area_pixels = np.sum(segmentation_mask)
+            current_mask_area_ratio = current_mask_area_pixels / (height * width)
+
+            # Re-evaluar con los umbrales después de la limpieza, si la máscara aún tiene área.
+            if current_mask_area_pixels == 0: # Si la limpieza eliminó el segmento
+                continue
+
+            if current_mask_area_ratio > max_area_ratio_threshold:
+                # print(f"Skipping large mask post-cleaning: ratio {current_mask_area_ratio:.4f}")
+                continue
             
-            # Exclude very large masks (likely the wall)
-            if area_ratio > 0.6:
+            if current_mask_area_ratio < min_area_ratio_threshold and current_mask_area_pixels < min_absolute_pixel_area_threshold:
+                # print(f"Skipping small mask post-cleaning: ratio {current_mask_area_ratio:.4f}, pixels {current_mask_area_pixels}")
                 continue
-                
-            # Exclude very small masks (likely noise)
-            if area_ratio < 0.01:
+            
+            # Limpieza de la máscara individual mejorada:
+            # 1. Abrir para eliminar pequeño ruido y desconectar objetos apenas unidos.
+            kernel_open = np.ones((3,3),np.uint8)
+            opened_segment = cv2.morphologyEx(segmentation_mask, cv2.MORPH_OPEN, kernel_open, iterations=1)
+            
+            # 2. Cerrar para rellenar huecos dentro de los objetos y consolidarlos.
+            # Usar un kernel un poco más grande para el cierre puede ayudar a que las hojas queden más completas.
+            kernel_close = np.ones((5,5),np.uint8)
+            cleaned_segment = cv2.morphologyEx(opened_segment, cv2.MORPH_CLOSE, kernel_close, iterations=2) # Aumentamos a 2 iteraciones para un cierre más efectivo
+            
+            # Volver a calcular el área de la máscara limpiada, ya que podría haber cambiado.
+            # Si la limpieza eliminó completamente la máscara, el área será 0.
+            current_mask_area_pixels = np.sum(cleaned_segment)
+            current_mask_area_ratio = current_mask_area_pixels / (height * width)
+
+            # Re-evaluar con los umbrales después de la limpieza, si la máscara aún tiene área.
+            if current_mask_area_pixels == 0: # Si la limpieza eliminó el segmento
                 continue
-                
-            # Check mask shape - prefer more compact shapes for objects on walls
-            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            if contours:
-                main_contour = max(contours, key=cv2.contourArea)
-                perimeter = cv2.arcLength(main_contour, True)
-                if perimeter > 0:
-                    circularity = 4 * np.pi * mask_area / (perimeter * perimeter)
-                    # More circular objects tend to be more valid (not the wall)
-                    if circularity > 0.2:
-                        valid_masks.append(mask_data)
+
+            if current_mask_area_ratio > max_area_ratio_threshold:
+                # print(f"Skipping large mask post-cleaning: ratio {current_mask_area_ratio:.4f}")
+                continue
+            
+            if current_mask_area_ratio < min_area_ratio_threshold and current_mask_area_pixels < min_absolute_pixel_area_threshold:
+                # print(f"Skipping small mask post-cleaning: ratio {current_mask_area_ratio:.4f}, pixels {current_mask_area_pixels}")
+                continue
+            
+            valid_masks_segments.append(cleaned_segment)
         
-        # If we have valid masks, use them
-        if valid_masks:
-            # For wall scenario, take up to 5 distinct objects
-            for mask_data in valid_masks[:5]:
-                mask = mask_data['segmentation'].astype(np.uint8)
-                cleaned_mask = clean_mask(mask)
-                combined_mask[cleaned_mask > 0] = 0
+        if valid_masks_segments:
+            for segment in valid_masks_segments:
+                combined_mask[segment > 0] = 0 # Marcar como obstáculo (negro)
         else:
-            # Fallback: use color-based segmentation to find objects against the wall
-            combined_mask = self._color_based_segmentation(original_image)
+            # Si ningún segmento de SAM pasó los filtros, es probable que SAM no haya encontrado nada útil.
+            print("No SAM masks passed filtering. Using fallback.")
+            return self._generate_fallback_mask(original_image_rgb, "pared")
         
         return combined_mask
 
@@ -495,7 +571,7 @@ class SAMProcessor:
 
     def _generate_fallback_mask(self, image, scene_type):
         """
-        Generate a fallback mask when validation fails.
+        Generate a fallback mask when validation fails or SAM fails.
         
         Args:
             image (numpy.ndarray): Original image
@@ -516,25 +592,44 @@ class SAMProcessor:
             binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
                                           cv2.THRESH_BINARY_INV, 11, 2)
         else:
-            # For wall, use Otsu's method
-            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            # For wall, use Otsu's method with enhancements
+            # Aplicar CLAHE para mejorar el contraste local y manejar mejor las variaciones de iluminación
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            processed_gray = clahe.apply(gray) 
+            
+            _, binary = cv2.threshold(processed_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         
         # Clean up the binary image
-        kernel = np.ones((3,3), np.uint8)
-        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-        
+        # Usar kernels distintos para apertura y cierre en el fallback si es necesario
+        kernel_open_fallback = np.ones((3,3), np.uint8)
+        kernel_close_fallback = np.ones((5,5), np.uint8) # Kernel más grande para cerrar bien
+
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel_open_fallback, iterations=1)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel_close_fallback, iterations=2) 
+
+        # Solo para el escenario de pared, si Otsu (invertido) da una máscara mayormente negra, 
+        # es probable que haya interpretado una pared vacía/uniforme como "objeto".
+        if scene_type.lower() != "table": # Esta lógica es específica para la pared
+            fallback_black_ratio_check = np.sum(binary == 0) / (h * w) # Porcentaje de píxeles negros en la máscara binaria (invertida)
+            # Si más del 70% es negro (obstáculo) en el fallback de pared, es probable un error.
+            if fallback_black_ratio_check > 0.70: 
+                print("Fallback (Otsu para pared) produjo una máscara predominantemente negra, devolviendo máscara blanca.")
+                return np.ones((h, w), dtype=np.uint8) * 255 # Devolver todo blanco
+
         # Find contours
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        # Filter contours by area
-        min_area = 0.005 * h * w  # Minimum size for an object
-        max_area = 0.5 * h * w    # Maximum size for an object
+        # Filter contours by area - ajustados para mayor sensibilidad a objetos pequeños y restricción a muy grandes
+        # Aseguramos un mínimo absoluto de píxeles y un porcentaje del área total.
+        min_pixel_area_fallback = 50 # Mínimo de 50 píxeles para ser considerado un objeto.
+        min_area_ratio_fallback = 0.0005 # Objetos que ocupen al menos 0.05% de la imagen
+        min_area = max(min_pixel_area_fallback, min_area_ratio_fallback * h * w)
+        max_area = 0.20 * h * w    # Máximo 20% del área de la imagen para evitar confundir fondo con objeto
         
         for contour in contours:
             area = cv2.contourArea(contour)
             if min_area < area < max_area:
                 # Fill in the contour on our mask
-                cv2.drawContours(mask, [contour], -1, 0, -1)
+                cv2.drawContours(mask, [contour], -1, 0, -1) # -1 para rellenar
         
         return mask
