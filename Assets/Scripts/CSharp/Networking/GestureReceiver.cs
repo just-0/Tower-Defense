@@ -12,7 +12,7 @@ public class GestureReceiver : MonoBehaviour
     [SerializeField] private Slider holdProgressSlider;
     [SerializeField] private Text phaseDisplayText;
     
-    public SAMController SAM;
+    public SAMSystemController SAM;
     private WebSocket websocket;
     private Texture2D receivedTexture;
     
@@ -42,6 +42,15 @@ public class GestureReceiver : MonoBehaviour
     async void Start()
     {
         receivedTexture = new Texture2D(2, 2);
+        if (SAM == null) 
+        {
+            Debug.LogError("GestureReceiver: SAMController (SAMSystemController) no está asignado.");
+        }
+        else if (!(SAM is SAMSystemController))
+        {
+            Debug.LogWarning("GestureReceiver: La referencia SAM no es del tipo SAMSystemController. Verifica la asignación en el Inspector.");
+        }
+
         websocket = new WebSocket("ws://localhost:8768");
 
         websocket.OnOpen += () => Debug.Log("Conexión abierta al servidor de rastreo de dedos");
@@ -147,7 +156,8 @@ public class GestureReceiver : MonoBehaviour
                     waitingForCombatResponse = false; // Es PROCESS_SAM
                     serverResponseTimer = 0f; // Reiniciar timer
                     currentFingerCount = 0;
-                    SAM.SendMessage("PROCESS_SAM");
+                    if (SAM != null) SAM.SendMessage("PROCESS_SAM");
+                    else Debug.LogError("GestureReceiver: SAM (SAMSystemController) es nulo, no se puede enviar PROCESS_SAM");
                 }
                 else if (currentFingerCount == 5)
                 {
@@ -155,7 +165,8 @@ public class GestureReceiver : MonoBehaviour
                     waitingForServerResponse = true;
                     waitingForCombatResponse = true; // Es START_COMBAT
                     serverResponseTimer = 0f; // Reiniciar timer
-                    SAM.SendMessage("START_COMBAT"); // Nuevo mensaje
+                    if (SAM != null) SAM.SendMessage("START_COMBAT");
+                    else Debug.LogError("GestureReceiver: SAM (SAMSystemController) es nulo, no se puede enviar START_COMBAT");
                 }
             }
         }

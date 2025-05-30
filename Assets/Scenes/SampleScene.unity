@@ -838,7 +838,7 @@ GameObject:
   - component: {fileID: 450121571}
   - component: {fileID: 450121572}
   m_Layer: 0
-  m_Name: WebSocketClient
+  m_Name: GestureReceiver
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -913,6 +913,54 @@ RectTransform:
   m_AnchoredPosition: {x: -5, y: 0}
   m_SizeDelta: {x: -20, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
+--- !u!1 &752914490
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 752914492}
+  - component: {fileID: 752914491}
+  m_Layer: 0
+  m_Name: MonsterManager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &752914491
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 752914490}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 337681b8fe8d0378ba279e247a71f9c2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  monsterPrefab: {fileID: 1524411113276028, guid: e2aafa8770d34a9591b41bedf4e318ba, type: 3}
+  monstersPerWave: 5
+  timeBetweenMonsters: 1
+  timeBetweenWaves: 10
+--- !u!4 &752914492
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 752914490}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -4.509445, y: -2.441922, z: 0.25469595}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &832575517
 GameObject:
   m_ObjectHideFlags: 0
@@ -1322,7 +1370,7 @@ GameObject:
   - component: {fileID: 1258561784}
   - component: {fileID: 1258561783}
   m_Layer: 0
-  m_Name: WebSocketSAM
+  m_Name: SamController
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1346,6 +1394,8 @@ MonoBehaviour:
   validPositionMaterial: {fileID: 2100000, guid: 286e79fb1ae7858a18c0ec1ec277e880, type: 2}
   invalidPositionMaterial: {fileID: 2100000, guid: bba7620a4b83d9805b353c17c70cb35e, type: 2}
   gestureReceiver: {fileID: 450121572}
+  monsterManager: {fileID: 752914491}
+  mainWebSocketClient: {fileID: 1317562144}
   connectionTimeout: 5
 --- !u!4 &1258561784
 Transform:
@@ -1361,6 +1411,51 @@ Transform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 844453760}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1317562143
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1317562145}
+  - component: {fileID: 1317562144}
+  m_Layer: 0
+  m_Name: NetworkManager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1317562144
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1317562143}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9b97ae045a51ade0093dbbd65275c6d2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  serverUrl: ws://localhost:8767
+--- !u!4 &1317562145
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1317562143}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -28.816282, y: 1.202844, z: -19.229239}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1473532097
@@ -1739,9 +1834,11 @@ SceneRoots:
   - {fileID: 330585546}
   - {fileID: 410087041}
   - {fileID: 832575519}
-  - {fileID: 450121571}
   - {fileID: 390159007}
   - {fileID: 991426186}
   - {fileID: 1473532098}
-  - {fileID: 1258561784}
   - {fileID: 1668190461}
+  - {fileID: 1258561784}
+  - {fileID: 752914492}
+  - {fileID: 450121571}
+  - {fileID: 1317562145}

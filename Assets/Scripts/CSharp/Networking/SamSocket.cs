@@ -1,13 +1,14 @@
 using UnityEngine;
 using UnityEngine.UI;
 using System.Text;
-using NativeWebSocket;
+// using NativeWebSocket; // Eliminado, MainWebSocketClient lo maneja
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System;
 using UnityEngine.SceneManagement;
 
-public class SAMController : MonoBehaviour
+// Cambiamos el nombre de la clase de SAMController a SAMSystemController
+public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
 {
     [Serializable]
     public struct Vector2Serializable
@@ -26,250 +27,222 @@ public class SAMController : MonoBehaviour
         public bool valid;
     }
 
+    [Header("Componentes UI y Visuales")]
     [SerializeField] private RawImage cameraDisplay;
     [SerializeField] private RawImage maskDisplay;
     [SerializeField] private GameObject gridCursor; // Cursor visual para la posición del dedo
     [SerializeField] private Material validPositionMaterial; // Material verde para posición válida
     [SerializeField] private Material invalidPositionMaterial; // Material rojo para posición inválida
+    
+    [Header("Referencias a Otros Sistemas")]
     [SerializeField] private GestureReceiver gestureReceiver; // Referencia a GestureReceiver para notificar respuestas del servidor
+    [SerializeField] private MonsterManager monsterManager; // Referencia al MonsterManager para las oleadas de monstruos
+    [SerializeField] private MainWebSocketClient mainWebSocketClient; // Referencia al nuevo cliente WebSocket
     
     private Texture2D cameraTexture;
     private Texture2D maskTexture;
-    private WebSocket websocket;
-    private bool isConnected = false;
+    // private WebSocket websocket; // Eliminado, MainWebSocketClient lo maneja
+    // private bool isConnected = false; // Eliminado, se usa mainWebSocketClient.IsConnected
     private bool processingFrame = false;
     private bool inCombatMode = false;
     private bool combatModeJustStarted = false; // Para detectar el primer frame de combate
-    private string serverUrl = "ws://localhost:8767";
+    // private string serverUrl = "ws://localhost:8767"; // Eliminado, MainWebSocketClient lo maneja
+    private List<Vector3> storedWorldPath; // Para almacenar el path hasta que se inicie combate
     private List<GameObject> pathSpheres = new List<GameObject>();
 
+    [Header("Configuración de Conexión")]
     [SerializeField] private float connectionTimeout = 5f;
     private float connectionTimer = 0f;
     private bool connectionChecked = false;
-    private bool mainCameraConnected = false;
+    private bool mainCameraConnected = false; // Relacionado con la recepción de frames de la cámara principal
 
     // Evento para notificar cuando se selecciona una posición válida
     public delegate void GridPositionSelected(Vector3 worldPosition);
     public event GridPositionSelected OnGridPositionSelected;
 
-    private Queue<byte[]> messageQueue = new Queue<byte[]>();
-    private object queueLock = new object();
-    private bool isProcessingQueue = false;
+    // private Queue<byte[]> messageQueue = new Queue<byte[]>(); // Eliminado, MainWebSocketClient lo maneja
+    // private object queueLock = new object(); // Eliminado
+    // private bool isProcessingQueue = false; // Eliminado
     private Vector3 targetCursorPosition;
     private float cursorSmoothSpeed = 20f;
     private bool debugSpheresCreated = false; // Para crear las esferas de debug solo una vez
 
-    async void Start()
+    void Start()
     {
-        Debug.Log("Iniciando SAMController");
+        Debug.Log("Iniciando SAMSystemController");
         
         // Verificar componentes críticos
-        if (gridCursor == null)
-        {
-            Debug.LogError("¡gridCursor no está asignado en el Inspector!");
-        }
-        
-        if (validPositionMaterial == null)
-        {
-            Debug.LogError("¡validPositionMaterial no está asignado en el Inspector!");
-        }
-        
-        if (invalidPositionMaterial == null)
-        {
-            Debug.LogError("¡invalidPositionMaterial no está asignado en el Inspector!");
-        }
+        if (gridCursor == null) Debug.LogError("¡gridCursor no está asignado en el Inspector!");
+        if (validPositionMaterial == null) Debug.LogError("¡validPositionMaterial no está asignado en el Inspector!");
+        if (invalidPositionMaterial == null) Debug.LogError("¡invalidPositionMaterial no está asignado en el Inspector!");
+        if (mainWebSocketClient == null) Debug.LogError("¡mainWebSocketClient no está asignado en el Inspector!");
         
         cameraTexture = new Texture2D(1, 1);
         maskTexture = new Texture2D(1, 1);
 
-        cameraDisplay.texture = cameraTexture;
-        maskDisplay.texture = maskTexture;
+        if (cameraDisplay != null) cameraDisplay.texture = cameraTexture;
+        if (maskDisplay != null) maskDisplay.texture = maskTexture;
 
-        cameraDisplay.enabled = true;
-        cameraDisplay.color = Color.white;
+        if (cameraDisplay != null) cameraDisplay.enabled = true;
+        if (cameraDisplay != null) cameraDisplay.color = Color.white;
 
-        maskDisplay.enabled = false;
-        maskDisplay.color = Color.white;
+        if (maskDisplay != null) maskDisplay.enabled = false;
+        if (maskDisplay != null) maskDisplay.color = Color.white;
         
-        // Inicializar posición del cursor
-        targetCursorPosition = gridCursor.transform.position;
+        if (gridCursor != null) targetCursorPosition = gridCursor.transform.position;
 
-        await ConnectToServer();
-    }
-
-    async Task ConnectToServer()
-    {
-        websocket = new WebSocket(serverUrl);
-
-        websocket.OnOpen += () =>
+        // Suscribirse a los eventos del MainWebSocketClient
+        if (mainWebSocketClient != null)
         {
-            Debug.Log("Connection opened");
-            isConnected = true;
-            SendMessage("START_CAMERA");
-        };
-
-        websocket.OnError += (e) => Debug.LogError($"Error: {e}");
-
-        websocket.OnClose += (e) =>
+            mainWebSocketClient.OnConnectionOpened += HandleConnectionOpened;
+            mainWebSocketClient.OnCameraMessageReceived += HandleCameraMessage;
+            mainWebSocketClient.OnProcessingCompleteReceived += HandleProcessingComplete;
+            mainWebSocketClient.OnSamMaskReceived += HandleSamMaskMessage;
+            mainWebSocketClient.OnPathPointsReceived += HandlePathPointsMessage;
+            mainWebSocketClient.OnGridPositionReceived += HandleGridPositionMessage;
+            // Podríamos también suscribirnos a OnError y OnClose si necesitamos lógica específica aquí
+        }
+        else
         {
-            Debug.Log("Connection closed");
-            isConnected = false;
-            
-            // Marcar las cámaras como desconectadas
-            InitialSceneLoader.SetCamerasConnected(false);
-        };
-
-        websocket.OnMessage += (bytes) => ProcessIncomingMessage(bytes);
-
-        await websocket.Connect();
-    }
-
-    private void ProcessIncomingMessage(byte[] bytes)
-    {
-        // Añadir el mensaje a la cola para procesarlo en el hilo principal
-        lock (queueLock)
-        {
-            messageQueue.Enqueue(bytes);
+            Debug.LogError("SAMSystemController: MainWebSocketClient no está asignado. No se pueden suscribir eventos.");
         }
     }
-    
-    private void ProcessMessageFromQueue(byte[] bytes)
+
+    // Los métodos ConnectToServer, ProcessIncomingMessage, ProcessMessageFromQueue han sido eliminados
+    // ya que MainWebSocketClient ahora maneja la conexión y la cola de mensajes.
+    // La lógica de ProcessMessageFromQueue se distribuye en los nuevos manejadores de eventos.
+
+    private void HandleConnectionOpened()
+    {
+        Debug.Log("SAMSystemController: Conectado al servidor a través de MainWebSocketClient.");
+        // Ahora que estamos conectados, podemos enviar el mensaje START_CAMERA
+        SendMessage("START_CAMERA");
+    }
+
+    private void HandleCameraMessage(byte[] messageData)
+    {
+        try {
+            if (cameraTexture == null) cameraTexture = new Texture2D(2, 2);
+            
+            cameraTexture.LoadImage(messageData);
+            cameraTexture.Apply();
+            
+            if (cameraDisplay != null) cameraDisplay.enabled = true;
+            if (maskDisplay != null) maskDisplay.enabled = false;
+            
+            mainCameraConnected = true;
+            
+            if (combatModeJustStarted && gestureReceiver != null)
+            {
+                gestureReceiver.OnCombatModeStarted();
+                combatModeJustStarted = false;
+            }
+        } catch (Exception e) {
+            Debug.LogError($"Error al cargar imagen de cámara: {e.Message}");
+        }
+    }
+
+    private void HandleProcessingComplete()
+    {
+        processingFrame = false;
+        if (cameraDisplay != null) cameraDisplay.enabled = true;
+        if (maskDisplay != null) maskDisplay.enabled = false;
+    }
+
+    private void HandleSamMaskMessage(byte[] messageData)
+    {
+        try {
+            if (maskTexture == null) maskTexture = new Texture2D(2, 2);
+            
+            maskTexture.LoadImage(messageData);
+            if (maskDisplay != null) maskDisplay.texture = maskTexture;
+            
+            if (gestureReceiver != null)
+            {
+                gestureReceiver.OnServerResponseReceived();
+            }
+        } catch (Exception e) {
+            Debug.LogError($"Error al cargar máscara: {e.Message}");
+        }
+    }
+
+    private void HandlePathPointsMessage(byte[] messageData)
+    {
+        try 
+        {
+            string jsonPath = Encoding.UTF8.GetString(messageData);
+            Vector2Serializable[] pathPoints = JsonHelper.FromJson<Vector2Serializable>(jsonPath);
+            
+            if (pathPoints != null && pathPoints.Length > 0) 
+            {
+                DrawPath(pathPoints); // La lógica de DrawPath se mantiene
+            }
+            
+            if (gestureReceiver != null)
+            {
+                gestureReceiver.OnServerResponseReceived();
+            }
+        }
+        catch (Exception e) 
+        {
+            Debug.LogError($"JSON parsing error en PathPoints: {e.Message}");
+        }
+    }
+
+    private void HandleGridPositionMessage(byte[] messageData)
     {
         try
         {
-            if (bytes == null || bytes.Length <= 1)
-                return;
+            string jsonGrid = Encoding.UTF8.GetString(messageData);
+            GridPosition gridPos = JsonUtility.FromJson<GridPosition>(jsonGrid);
             
-            byte messageType = bytes[0];
-            byte[] messageData = new byte[bytes.Length - 1];
-            Buffer.BlockCopy(bytes, 1, messageData, 0, bytes.Length - 1);
-
-            switch (messageType)
+            if (gridCursor != null && validPositionMaterial != null && invalidPositionMaterial != null)
             {
-                case 1: // Camera
-                    // Usar try para proteger contra errores de carga de texturas
-                    try {
-                        if (cameraTexture == null)
-                            cameraTexture = new Texture2D(2, 2);
-                        
-                        cameraTexture.LoadImage(messageData);
-                        cameraTexture.Apply();
-                         
-                        cameraDisplay.enabled = true;
-                        maskDisplay.enabled = false;
-                        
-                        // Marcar que la cámara principal está conectada
-                        mainCameraConnected = true;
-                        
-                        // Si acabamos de entrar en modo combate, notificar a GestureReceiver
-                        if (combatModeJustStarted && gestureReceiver != null)
-                        {
-                            gestureReceiver.OnCombatModeStarted();
-                            combatModeJustStarted = false; // Solo notificar una vez
-                        }
-                    } catch (Exception e) {
-                        Debug.LogError($"Error al cargar imagen de cámara: {e.Message}");
-                    }
-                    break;
-
-                case 2: // Processing complete
-                    processingFrame = false;
-                    cameraDisplay.enabled = true;
-                    maskDisplay.enabled = false;
-                    break;
-
-                case 3: // SAM mask
-                    try {
-                        if (maskTexture == null)
-                            maskTexture = new Texture2D(2, 2);
-                        
-                        maskTexture.LoadImage(messageData);
-                        maskDisplay.texture = maskTexture;
-                        
-                        // Notificar a GestureReceiver que se recibió respuesta del servidor
-                        if (gestureReceiver != null)
-                        {
-                            gestureReceiver.OnServerResponseReceived();
-                        }
-                    } catch (Exception e) {
-                        Debug.LogError($"Error al cargar máscara: {e.Message}");
-                    }
-                    break;
-                    
-                case 4: // A* path points
-                    try 
-                    {
-                        string jsonPath = Encoding.UTF8.GetString(messageData);
-                        Vector2Serializable[] pathPoints = JsonHelper.FromJson<Vector2Serializable>(jsonPath);
-                        
-                        if (pathPoints != null && pathPoints.Length > 0) 
-                        {
-                            DrawPath(pathPoints);
-                        }
-                        
-                        // Notificar a GestureReceiver que se recibió respuesta del servidor (path)
-                        if (gestureReceiver != null)
-                        {
-                            gestureReceiver.OnServerResponseReceived();
-                        }
-                    }
-                    catch (Exception e) 
-                    {
-                        Debug.LogError($"JSON parsing error: {e.Message}");
-                    }
-                    break;
-
-                case 6: // Grid Position (MESSAGE_TYPE_GRID_POSITION)
-                    try
-                    {
-                        string jsonGrid = Encoding.UTF8.GetString(messageData);
-                        GridPosition gridPos = JsonUtility.FromJson<GridPosition>(jsonGrid);
-                        
-                        
-                        if (gridCursor != null && validPositionMaterial != null && invalidPositionMaterial != null)
-                        {
-                            UpdateGridCursor(gridPos);
-                        }
-                    }
-                    catch (Exception e)
-                    {
-                        Debug.LogError($"Error al procesar posición de cuadrícula: {e.Message}");
-                    }
-                    break;
+                UpdateGridCursor(gridPos); // La lógica de UpdateGridCursor se mantiene
             }
         }
         catch (Exception e)
         {
-            Debug.LogError($"Error procesando mensaje: {e.Message}");
+            Debug.LogError($"Error al procesar posición de cuadrícula: {e.Message}");
         }
     }
 
     private void DrawPath(Vector2Serializable[] pathPoints) 
     {
-        // Clear previous path
-        foreach (var sphere in pathSpheres)
-        {
-            if (sphere != null)
-                Destroy(sphere);
-        }
-        pathSpheres.Clear();
+        // Clear previous path spheres
+        ClearPathSpheres(); // Usa el método existente para limpiar esferas
         
-        // Camera dimensions
+        if (pathPoints == null || pathPoints.Length == 0)
+        {
+            Debug.LogWarning("No se recibió un path válido para dibujar.");
+            return;
+        }
+        
+        storedWorldPath = ConvertPathToWorldCoordinates(pathPoints);
+        
+        if(!inCombatMode)
+        {
+            DrawPathSpheres(pathPoints); // Este método ya existe
+        }
+        else 
+        {
+            Debug.Log($"Path procesado y almacenado con {storedWorldPath.Count} puntos mientras está en modo combate.");
+        }
+    }
+    
+    private void DrawPathSpheres(Vector2Serializable[] pathPoints)
+    {
+        if (Camera.main == null) {
+            Debug.LogError("DrawPathSpheres: Camera.main es nula.");
+            return;
+        }
         float orthoHeight = Camera.main.orthographicSize;
         float orthoWidth = orthoHeight * Camera.main.aspect;
-        
-        // Original size (640x480)
         float originalWidth = 640f;
         float originalHeight = 480f;
-        
-        // Scale factors
         float scaleX = (orthoWidth * 2f) / originalWidth;
         float scaleY = (orthoHeight * 2f) / originalHeight;
-        
-        // Z position
         float zPos = -5f;
-        
-        
         int step = 15; 
 
         for (int i = 0; i < pathPoints.Length; i += step)
@@ -277,34 +250,76 @@ public class SAMController : MonoBehaviour
             var point = pathPoints[i];
             float worldX = (point.x - originalWidth / 2f) * scaleX;
             float worldY = -(point.y - originalHeight / 2f) * scaleY;
-
             CreateSphere(new Vector3(worldX, worldY, zPos), Color.cyan);
         }
 
-        
-        // Debug first point
         if (pathPoints.Length > 0)
         {
             float firstX = (pathPoints[0].x - originalWidth / 2f) * scaleX;
             float firstY = -(pathPoints[0].y - originalHeight / 2f) * scaleY;
-            Debug.Log($"First point: 640x480=({pathPoints[0].x}, {pathPoints[0].y}) → World=({firstX}, {firstY})");
+            Debug.Log($"First path point: Screen=({pathPoints[0].x}, {pathPoints[0].y}) -> World=({firstX}, {firstY})");
         }
     }
 
-    private void CreateSphere(Vector3 position, Color color)
+    private List<Vector3> ConvertPathToWorldCoordinates(Vector2Serializable[] pathPoints)
+    {
+        List<Vector3> worldPath = new List<Vector3>();
+        if (Camera.main == null) {
+            Debug.LogError("ConvertPathToWorldCoordinates: Camera.main es nula.");
+            return worldPath; // Devuelve lista vacía
+        }
+        float orthoHeight = Camera.main.orthographicSize;
+        float orthoWidth = orthoHeight * Camera.main.aspect;
+        float originalWidth = 640f;
+        float originalHeight = 480f;
+        float scaleX = (orthoWidth * 2f) / originalWidth;
+        float scaleY = (orthoHeight * 2f) / originalHeight;
+        float zPos = -3f;
+        
+        foreach (var point in pathPoints)
+        {
+            float worldX = (point.x - originalWidth / 2f) * scaleX;
+            float worldY = -(point.y - originalHeight / 2f) * scaleY;
+            worldPath.Add(new Vector3(worldX, worldY, zPos));
+        }
+        return worldPath;
+    }
+    
+    private void CreateDebugPathSpheres(List<Vector3> worldPath)
+    {
+        if (worldPath == null || worldPath.Count == 0) return;
+        int step = Mathf.Max(1, worldPath.Count / 10);
+        for (int i = 0; i < worldPath.Count; i += step)
+        {
+            CreateSphere(worldPath[i], Color.yellow, 0.2f);
+        }
+        if (worldPath.Count > 0)
+        {
+            CreateSphere(worldPath[0], Color.green, 0.3f);
+            CreateSphere(worldPath[worldPath.Count - 1], Color.red, 0.3f);
+        }
+    }
+
+    private void CreateSphere(Vector3 position, Color color, float scale = 0.3f)
     {
         GameObject sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         sphere.transform.position = position;
-        sphere.transform.localScale = Vector3.one * 0.3f;
-        
+        sphere.transform.localScale = Vector3.one * scale;
         Renderer renderer = sphere.GetComponent<Renderer>();
         if (renderer != null) 
         {
             renderer.material = new Material(Shader.Find("Standard"));
             renderer.material.color = color;
         }
-
-        sphere.AddComponent<PulsingSphere>(); // <- animación
+        // Asegurarse que PulsingSphere exista o manejar su ausencia
+        if (sphere.GetComponent<PulsingSphere>() == null && typeof(PulsingSphere).IsSubclassOf(typeof(Component)))
+        {
+            sphere.AddComponent<PulsingSphere>();
+        }
+        else if (typeof(PulsingSphere) == null)
+        {
+            Debug.LogWarning("CreateSphere: El script PulsingSphere no se encontró o no es un componente.");
+        }
 
         pathSpheres.Add(sphere);
     }
@@ -313,47 +328,50 @@ public class SAMController : MonoBehaviour
     {
         GameObject sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         sphere.transform.position = position;
-        // Usar una escala ligeramente diferente o igual, según preferencia para debug
         sphere.transform.localScale = Vector3.one * 0.35f; 
-        
         Renderer renderer = sphere.GetComponent<Renderer>();
         if (renderer != null)
         {
             renderer.material = new Material(Shader.Find("Standard"));
             renderer.material.color = color;
         }
-        // No añadir PulsingSphere para que sean estáticas
-        // No añadir a pathSpheres para que no se borren con el camino
         return sphere;
     }
 
-    void DrawDebugEdgeSpheres(){
+    void DrawDebugEdgeSpheres()
+    {
         if (Camera.main == null)
         {
-            Debug.LogError("Camera.main no está disponible para dibujar esferas de depuración.");
+            Debug.LogError("DrawDebugEdgeSpheres: Camera.main no está disponible.");
             return;
         }
-
+        // La lógica para crear las esferas en los bordes se mantiene aquí
+        // Este método debe ser revisado para asegurar que su lógica de dibujo sea correcta
+        // y que cree los GameObjects como se espera (ej. usando CreateDebugSphere).
+        // Por ahora, el cuerpo del método está vacío como en el original, pero necesita implementación.
         float orthoHeight = Camera.main.orthographicSize;
         float orthoWidth = orthoHeight * Camera.main.aspect;
-        
         float originalWidth = 640f; 
         float originalHeight = 480f;
-        
         float scaleX = (orthoWidth * 2f) / originalWidth;
         float scaleY = (orthoHeight * 2f) / originalHeight;
-        
-        float zPos = -5f;   
+        float zPos = -5f; 
+        // Ejemplo de cómo podrías crear las esferas:
+        // CreateDebugSphere(new Vector3(-orthoWidth + (0 - originalWidth / 2f) * scaleX, -(0 - originalHeight / 2f) * scaleY, zPos), Color.magenta); // Top-left
+        // CreateDebugSphere(new Vector3(-orthoWidth + (originalWidth - originalWidth / 2f) * scaleX, -(0 - originalHeight / 2f) * scaleY, zPos), Color.magenta); // Top-right
+        // CreateDebugSphere(new Vector3(-orthoWidth + (0 - originalWidth / 2f) * scaleX, -(originalHeight - originalHeight / 2f) * scaleY, zPos), Color.magenta); // Bottom-left
+        // CreateDebugSphere(new Vector3(-orthoWidth + (originalWidth - originalWidth / 2f) * scaleX, -(originalHeight - originalHeight / 2f) * scaleY, zPos), Color.magenta); // Bottom-right
+         Debug.Log("DrawDebugEdgeSpheres fue llamado pero no tiene implementación para crear esferas.");
     }
-
-
 
     private void UpdateGridCursor(GridPosition gridPos)
     {
-        if (gridCursor == null) 
+        if (gridCursor == null) return;
+        if (Camera.main == null) {
+            Debug.LogError("UpdateGridCursor: Camera.main es nula.");
             return;
+        }
 
-        // Convertir coordenadas de la cámara a coordenadas del mundo
         float orthoHeight = Camera.main.orthographicSize;
         float orthoWidth = orthoHeight * Camera.main.aspect;
         float originalWidth = 640f;
@@ -364,21 +382,41 @@ public class SAMController : MonoBehaviour
         float worldX = (gridPos.x - originalWidth / 2f) * scaleX;
         float worldY = -(gridPos.y - originalHeight / 2f) * scaleY;
         
-        // Actualizar la posición objetivo, no la posición directa
         targetCursorPosition = new Vector3(worldX, worldY, -5f);
 
-        // Actualizar material según validez
         Renderer renderer = gridCursor.GetComponent<Renderer>();
         if (renderer != null)
         {
             renderer.material = gridPos.valid ? validPositionMaterial : invalidPositionMaterial;
         }
 
-        // Si la posición es válida, notificar a los listeners
         if (gridPos.valid)
         {
             OnGridPositionSelected?.Invoke(targetCursorPosition);
         }
+    }
+
+    private void ClearPathSpheres()
+    {
+        foreach (var sphere in pathSpheres)
+        {
+            if (sphere != null) Destroy(sphere);
+        }
+        pathSpheres.Clear();
+    }
+
+    private void RedrawStoredPath()
+    {
+        if (storedWorldPath == null || storedWorldPath.Count == 0) return;
+        ClearPathSpheres(); // Limpiar esferas existentes antes de redibujar
+        int step = Mathf.Max(1, storedWorldPath.Count / 15);
+        for (int i = 0; i < storedWorldPath.Count; i += step)
+        {
+            Vector3 spherePos = storedWorldPath[i];
+            spherePos.z = -5f;
+            CreateSphere(spherePos, Color.cyan);
+        }
+        Debug.Log($"Path redibujado con {pathSpheres.Count} esferas");
     }
 
     void Update()
@@ -393,20 +431,19 @@ public class SAMController : MonoBehaviour
             );
         }
         
-        // Procesar la cola de mensajes en el update para evitar problemas de thread
-        ProcessQueuedMessages();
+        // ProcessQueuedMessages(); // Eliminado, MainWebSocketClient lo maneja
         
-        #if !UNITY_WEBGL || UNITY_EDITOR
-        if (websocket != null)
-        {
-            websocket.DispatchMessageQueue();
-        }
-        #endif
+        // #if !UNITY_WEBGL || UNITY_EDITOR // Eliminado, MainWebSocketClient lo maneja
+        // if (websocket != null)
+        // {
+        //     websocket.DispatchMessageQueue();
+        // }
+        // #endif
 
         // Dibujar esferas de depuración una vez que la cámara principal esté conectada
-        if (mainCameraConnected && !debugSpheresCreated)
+        if (mainCameraConnected && !debugSpheresCreated && Camera.main != null) // Añadida comprobación de Camera.main
         {
-            DrawDebugEdgeSpheres();
+            DrawDebugEdgeSpheres(); // Asumiendo que DrawDebugEdgeSpheres usa Camera.main
             debugSpheresCreated = true;
         }
 
@@ -419,89 +456,106 @@ public class SAMController : MonoBehaviour
             {
                 connectionChecked = true;
                 
-                // Si no se ha recibido ningún frame de la cámara principal después del timeout,
-                // redirigir a la escena de verificación de cámaras
-                if (!mainCameraConnected)
+                if (!mainCameraConnected) // mainCameraConnected es actualizado por HandleCameraMessage
                 {
-                    Debug.LogWarning("No se detectó conexión con la cámara principal. Redirigiendo a la escena de verificación.");
-                    SceneManager.LoadScene("CameraVerification");
+                    Debug.LogWarning("No se detectó conexión con la cámara principal (desde SAMSystemController). Redirigiendo a la escena de verificación.");
+                    // Asegurarse que InitialSceneLoader exista antes de llamar
+                    if (FindObjectOfType<InitialSceneLoader>() != null) 
+                    {
+                         // Esta lógica de redirección quizás debería ser más centralizada o manejada por un game manager
+                        SceneManager.LoadScene("CameraVerification");
+                    }
+                    else
+                    {
+                        Debug.LogWarning("InitialSceneLoader no encontrado. No se puede redirigir.");
+                    }
                 }
             }
         }
 
-        if (Input.GetKeyDown(KeyCode.Space) && isConnected && !processingFrame)
+        // Comprobar mainWebSocketClient.IsConnected en lugar de isConnected
+        if (Input.GetKeyDown(KeyCode.Space) && mainWebSocketClient != null && mainWebSocketClient.IsConnected && !processingFrame)
         {
             processingFrame = true;
             SendMessage("PROCESS_SAM");
         }
 
         // Tecla C para alternar modo combate
-        if (Input.GetKeyDown(KeyCode.C) && isConnected)
+        if (Input.GetKeyDown(KeyCode.C) && mainWebSocketClient != null && mainWebSocketClient.IsConnected)
         {
-            inCombatMode = !inCombatMode;
-            SendMessage(inCombatMode ? "START_COMBAT" : "STOP_COMBAT");
+            // inCombatMode se actualiza dentro de SendMessage cuando es START_COMBAT o STOP_COMBAT
+            SendMessage(inCombatMode ? "STOP_COMBAT" : "START_COMBAT");
         }
     }
     
-    // Procesar mensajes en cola para evitar bloqueos
-    private void ProcessQueuedMessages()
+    // ProcessQueuedMessages(); // Ya está eliminado arriba, pero por si acaso se repite en el diff
+
+    // Modificar SendMessage para usar mainWebSocketClient
+    public async void SendMessage(string message) // Cambiado a public async void para mantener la firma pero Task sería mejor
     {
-        if (isProcessingQueue)
+        if (mainWebSocketClient == null || !mainWebSocketClient.IsConnected)
+        {
+            Debug.LogWarning($"SAMSystemController: No se puede enviar mensaje '{message}'. MainWebSocketClient no está disponible o conectado.");
             return;
+        }
+
+        // La lógica de combatModeJustStarted, inCombatMode, etc., se mantiene aquí
+        // ya que es específica del sistema SAM y no del cliente WebSocket genérico.
+        if (message == "START_COMBAT")
+        {
+            combatModeJustStarted = true;
+            inCombatMode = true;
             
-        isProcessingQueue = true;
+            ClearPathSpheres();
+            Debug.Log("Esferas del camino eliminadas al entrar en modo combate");
+            
+            if (monsterManager != null && storedWorldPath != null && storedWorldPath.Count > 0)
+            {
+                monsterManager.SetPath(storedWorldPath);
+                Debug.Log($"Modo combate iniciado - Path enviado al MonsterManager con {storedWorldPath.Count} puntos");
+            }
+            else if (monsterManager == null) Debug.LogWarning("MonsterManager no está asignado en SAMSystemController");
+            else Debug.LogWarning("No hay path válido almacenado para iniciar modo combate. Ejecuta PROCESS_SAM primero.");
+        }
+        else if (message == "STOP_COMBAT")
+        {
+            inCombatMode = false;
+            combatModeJustStarted = false;
+            
+            if (monsterManager != null) monsterManager.StopAllWaves();
+            Debug.Log("Oleadas de monstruos detenidas al salir del modo combate");
+            
+            if (storedWorldPath != null && storedWorldPath.Count > 0)
+            {
+                RedrawStoredPath();
+                Debug.Log("Path redibujado al salir del modo combate");
+            }
+        }
         
-        try
-        {
-            // Procesar un número limitado de mensajes por frame para mantener el rendimiento
-            int messagesToProcess = 5;
-            int processedCount = 0;
-            
-            lock (queueLock)
-            {
-                while (messageQueue.Count > 0 && processedCount < messagesToProcess)
-                {
-                    byte[] message = messageQueue.Dequeue();
-                    ProcessMessageFromQueue(message);
-                    processedCount++;
-                }
-            }
-        }
-        catch (Exception e)
-        {
-            Debug.LogError($"Error al procesar cola de mensajes: {e.Message}");
-        }
-        finally
-        {
-            isProcessingQueue = false;
-        }
+        // Enviar el mensaje a través del MainWebSocketClient
+        await mainWebSocketClient.SendMessageAsync(message);
     }
 
-    public async void SendMessage(string message)
-    {
-        if (websocket != null && websocket.State == WebSocketState.Open)
-        {
-            // Si es START_COMBAT, marcar que acabamos de iniciar modo combate
-            if (message == "START_COMBAT")
-            {
-                combatModeJustStarted = true;
-                inCombatMode = true;
-            }
-            else if (message == "STOP_COMBAT")
-            {
-                inCombatMode = false;
-                combatModeJustStarted = false;
-            }
-            
-            await websocket.SendText(message);
-        }
-    }
+    // OnApplicationQuit ya no necesita manejar el WebSocket, MainWebSocketClient lo hace.
+    // private async void OnApplicationQuit()
+    // {
+    //     if (websocket != null && websocket.State == WebSocketState.Open)
+    //     {
+    //         await websocket.Close();
+    //     }
+    // }
 
-    private async void OnApplicationQuit()
+    void OnDestroy()
     {
-        if (websocket != null && websocket.State == WebSocketState.Open)
+        // Darse de baja de los eventos para evitar errores si MainWebSocketClient se destruye después
+        if (mainWebSocketClient != null)
         {
-            await websocket.Close();
+            mainWebSocketClient.OnConnectionOpened -= HandleConnectionOpened;
+            mainWebSocketClient.OnCameraMessageReceived -= HandleCameraMessage;
+            mainWebSocketClient.OnProcessingCompleteReceived -= HandleProcessingComplete;
+            mainWebSocketClient.OnSamMaskReceived -= HandleSamMaskMessage;
+            mainWebSocketClient.OnPathPointsReceived -= HandlePathPointsMessage;
+            mainWebSocketClient.OnGridPositionReceived -= HandleGridPositionMessage;
         }
     }
 } 
