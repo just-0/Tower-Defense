@@ -14,6 +14,8 @@ public class TurretData : ScriptableObject
     public float fireRate = 1f; // Disparos por segundo
     public float range = 10f;   // Rango de ataque
     public float damage = 20f;
+    public bool isExplosive = false;
+    public float explosionRadius = 2f;
 
     [Header("Visuals & SFX - Opcional")]
     public ParticleSystem placementEffect;

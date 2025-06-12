@@ -4,13 +4,18 @@ public class Projectile : MonoBehaviour
 {
     private Transform target;
     private float damage;
+    private bool isExplosive;
+    private float explosionRadius;
+    
     public float speed = 70f;
     public GameObject impactEffect; // Partículas de impacto
 
-    public void Seek(Transform _target, float _damage)
+    public void Seek(Transform _target, float _damage, bool _isExplosive, float _explosionRadius)
     {
         target = _target;
         damage = _damage;
+        isExplosive = _isExplosive;
+        explosionRadius = _explosionRadius;
     }
 
     void Update()
@@ -41,16 +46,45 @@ public class Projectile : MonoBehaviour
             Destroy(effectIns, 2f); // Destruir efecto después de 2 segundos
         }
 
-        Monster monster = target.GetComponent<Monster>();
-        if (monster != null)
+        if (isExplosive)
         {
-            monster.TakeDamage(damage);
+            Explode();
         }
         else
         {
-            // Si el objetivo no es un monstruo (quizás fue destruido)
-            // podrías aplicar daño en área o simplemente destruir el proyectil
+            // Daño a un solo objetivo
+            if(target != null) {
+                Monster monster = target.GetComponent<Monster>();
+                if (monster != null)
+                {
+                    monster.TakeDamage(damage);
+                }
+            }
         }
+        
         Destroy(gameObject);
+    }
+    
+    void Explode()
+    {
+        Collider[] colliders = Physics.OverlapSphere(transform.position, explosionRadius);
+        foreach (Collider collider in colliders)
+        {
+            Monster monster = collider.GetComponent<Monster>();
+            if (monster != null)
+            {
+                // Opcional: podrías hacer que el daño disminuya con la distancia al centro
+                monster.TakeDamage(damage);
+            }
+        }
+    }
+
+    void OnDrawGizmosSelected()
+    {
+        if (isExplosive)
+        {
+            Gizmos.color = Color.yellow;
+            Gizmos.DrawWireSphere(transform.position, explosionRadius);
+        }
     }
 } 

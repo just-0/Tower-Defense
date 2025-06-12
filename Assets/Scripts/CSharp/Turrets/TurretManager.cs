@@ -6,10 +6,20 @@ public class TurretManager : MonoBehaviour
     public static TurretManager Instance { get; private set; }
 
     [Header("Turret Settings")]
-    [Tooltip("El tipo de torreta por defecto que se colocará. Puedes expandir esto para seleccionar diferentes tipos.")]
-    public TurretData defaultTurretData; // Podrías tener una lista y seleccionar por tipo/dedos
+    [Tooltip("La lista de todos los tipos de torretas disponibles en el juego.")]
+    public List<TurretData> turretDatas; // Lista de todos los tipos de torretas
 
     [SerializeField] private Transform turretsParent; // Opcional: para organizar las torretas en la jerarquía
+
+    // El límite de torretas por oleada ha sido eliminado.
+    // [Header("Placement Rules")]
+    // [SerializeField] private int maxTurretsPerWave = 2;
+    // private int turretsPlacedThisWave = 0;
+
+    private int selectedTurretIndex = 0; // La torreta seleccionada por defecto es la primera de la lista
+
+    // Referencia al MonsterManager para saber cuándo empieza una oleada
+    private MonsterManager monsterManager;
 
     // Lista de torretas activas (opcional, para gestión)
     private List<Turret> activeTurrets = new List<Turret>();
@@ -30,32 +40,116 @@ public class TurretManager : MonoBehaviour
         }
     }
 
+    void Start()
+    {
+        monsterManager = FindObjectOfType<MonsterManager>();
+        if (monsterManager != null)
+        {
+            // Ya no necesitamos suscribirnos a este evento para resetear el contador.
+            // MonsterManager.OnWaveStart += HandleWaveStart;
+        }
+        else
+        {
+            //Debug.LogError("TurretManager no pudo encontrar a MonsterManager en la escena.");
+        }
+    }
+
+    void OnDestroy()
+    {
+        if (monsterManager != null)
+        {
+            // MonsterManager.OnWaveStart -= HandleWaveStart;
+        }
+    }
+    
+    // El handler para el inicio de la oleada ya no es necesario.
+    // private void HandleWaveStart(int waveNumber)
+    // {
+    //     turretsPlacedThisWave = 0;
+    //     //Debug.Log($"Oleada {waveNumber} iniciada. Se pueden colocar {maxTurretsPerWave} torretas.");
+    // }
+
+    /// <summary>
+    /// Selecciona el tipo de torreta a colocar. El índice corresponde a la lista `turretDatas`.
+    /// </summary>
+    /// <param name="index">Índice de la torreta en la lista `turretDatas`.</param>
+    public void SelectTurret(int index)
+    {
+        if (index >= 0 && index < turretDatas.Count)
+        {
+            selectedTurretIndex = index;
+            //Debug.Log($"Torreta seleccionada: {turretDatas[selectedTurretIndex].turretName}");
+            
+            if(UIManager.Instance != null)
+            {
+                UIManager.Instance.UpdateSelectedTurretUI(turretDatas[selectedTurretIndex]);
+            }
+        }
+        else
+        {
+            //Debug.LogWarning($"Índice de torreta ({index}) fuera de rango.");
+        }
+    }
+
+    /// <summary>
+    /// Coloca la torreta actualmente seleccionada en la posición dada.
+    /// </summary>
+    /// <param name="worldPosition">La posición en el mundo donde se colocará la torreta.</param>
+    public void PlaceSelectedTurret(Vector3 worldPosition)
+    {
+        if (turretDatas == null || turretDatas.Count == 0)
+        {
+            //Debug.LogError("TurretManager: No hay datos de torretas asignados en la lista.");
+            return;
+        }
+
+        if (selectedTurretIndex < 0 || selectedTurretIndex >= turretDatas.Count)
+        {
+            //Debug.LogError("TurretManager: El índice de la torreta seleccionada es inválido.");
+            return;
+        }
+
+        PlaceTurret(turretDatas[selectedTurretIndex], worldPosition);
+    }
+
     /// <summary>
     /// Coloca una torreta del tipo especificado en la posición dada.
     /// </summary>
     /// <param name="turretType">Los datos de la torreta a colocar.</param>
     /// <param name="worldPosition">La posición en el mundo donde se colocará la torreta.</param>
-    public void PlaceTurret(TurretData turretType, Vector3 worldPosition)
+    private void PlaceTurret(TurretData turretType, Vector3 worldPosition)
     {
         if (turretType == null)
         {
-            Debug.LogError("TurretManager: TurretData es nulo. No se puede colocar la torreta.");
+            //Debug.LogError("TurretManager: TurretData es nulo. No se puede colocar la torreta.");
             return;
         }
+        
+        // Lógica de límite de torretas eliminada.
+        // if (turretsPlacedThisWave >= maxTurretsPerWave)
+        // {
+        //     //Debug.LogWarning($"Límite de torretas ({maxTurretsPerWave}) para esta oleada alcanzado.");
+        //     return;
+        // }
+
+        if (GameManager.Instance == null || !GameManager.Instance.SpendGold(turretType.cost))
+        {
+            //Debug.LogWarning($"No hay suficiente oro para la torreta {turretType.turretName}.");
+            UIManager.Instance?.FlashGoldText(); 
+            return;
+        }
+
         if (turretType.turretPrefab == null)
         {
-            Debug.LogError($"TurretManager: El prefab para {turretType.turretName} es nulo.");
+            //Debug.LogError($"TurretManager: El prefab para {turretType.turretName} es nulo.");
+            GameManager.Instance.AddGold(turretType.cost);
             return;
         }
 
-        // Aquí podrías añadir lógica de coste, si el jugador tiene suficientes recursos, etc.
-        // Ejemplo: if (PlayerResources.Instance.CanAfford(turretType.cost)) { ... }
-
-        Debug.Log($"Colocando torreta {turretType.turretName} en {worldPosition}");
+        //Debug.Log($"Colocando torreta {turretType.turretName} en {worldPosition}");
 
         GameObject turretGO = Instantiate(turretType.turretPrefab, worldPosition, Quaternion.identity, turretsParent);
         
-        // Ajustar la escala y rotación inicial de la torreta instanciada
         turretGO.transform.localScale = new Vector3(0.2f, 0.2f, 0.2f);
         turretGO.transform.rotation = Quaternion.Euler(-90f, 0f, 0f);
 
@@ -65,38 +159,26 @@ public class TurretManager : MonoBehaviour
         {
             turretComponent.Initialize(turretType);
             activeTurrets.Add(turretComponent);
+            
+            // Lógica de conteo de torretas eliminada.
+            // turretsPlacedThisWave++;
+            // //Debug.Log($"Torretas colocadas en esta oleada: {turretsPlacedThisWave}/{maxTurretsPerWave}");
 
-            // Efectos de colocación
             if (turretType.placementEffect != null)
             {
                 Instantiate(turretType.placementEffect, worldPosition, Quaternion.identity);
             }
             if (turretType.placementSound != null)
             {
-                // Necesitarías un AudioSource o un gestor de audio
                 AudioSource.PlayClipAtPoint(turretType.placementSound, worldPosition);
             }
         }
         else
         {
-            Debug.LogError($"El prefab de torreta {turretType.turretName} no tiene un componente Turret adjunto.");
-            Destroy(turretGO); // Limpiar si no se pudo inicializar
+            //Debug.LogError($"El prefab de torreta {turretType.turretName} no tiene un componente Turret adjunto.");
+            Destroy(turretGO); 
+            GameManager.Instance.AddGold(turretType.cost);
         }
-    }
-
-    /// <summary>
-    /// Método de conveniencia para colocar la torreta por defecto.
-    /// Este es el método que SAMSystemController podría llamar.
-    /// </summary>
-    /// <param name="worldPosition">La posición en el mundo donde se colocará la torreta.</param>
-    public void PlaceDefaultTurret(Vector3 worldPosition)
-    {
-        if (defaultTurretData == null)
-        {
-            Debug.LogError("TurretManager: No se ha asignado defaultTurretData en el Inspector.");
-            return;
-        }
-        PlaceTurret(defaultTurretData, worldPosition);
     }
 
     // Futuras expansiones:

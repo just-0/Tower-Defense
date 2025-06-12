@@ -10,16 +10,18 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 233938d95276fde388e065fd044caaf9, type: 3}
-  m_Name: FattyCannonData
+  m_Name: Francotirador
   m_EditorClassIdentifier: 
-  turretName: Fatty Cannon
+  turretName: Francotirador
   turretPrefab: {fileID: 1875090778556656, guid: 7191a0df8b6695d449a0f18a361bc311, type: 3}
-  projectilePrefab: {fileID: 1627521441993660, guid: 12ea0a574b594264685afffd52fff036, type: 3}
-  cost: 100
+  projectilePrefab: {fileID: 1627521441993660, guid: f22ce32f9463a923795832db143c3747, type: 3}
+  cost: 200
   level: 1
-  fireRate: 5
-  range: 10
-  damage: 10
+  fireRate: 0.5
+  range: 30
+  damage: 120
+  isExplosive: 0
+  explosionRadius: 2
   placementEffect: {fileID: 0}
   placementSound: {fileID: 0}
   firingEffect: {fileID: 0}

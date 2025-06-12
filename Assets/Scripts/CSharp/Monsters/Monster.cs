@@ -82,7 +82,34 @@ public class Monster : MonoBehaviour
         // Rotar hacia la dirección de movimiento
         if (direction != Vector3.zero)
         {
-            transform.rotation = Quaternion.LookRotation(Vector3.forward, direction);
+            if (Mathf.Abs(direction.x) > Mathf.Abs(direction.y))
+            {
+                // Movimiento horizontal
+                if (direction.x > 0)
+                {
+                    // Derecha
+                    transform.rotation = Quaternion.Euler(0, 75, -75);
+                }
+                else
+                {
+                    // Izquierda
+                    transform.rotation = Quaternion.Euler(0, -75, 75);
+                }
+            }
+            else
+            {
+                // Movimiento vertical
+                if (direction.y > 0)
+                {
+                    // Arriba
+                    transform.rotation = Quaternion.Euler(-90, 0, 0);
+                }
+                else
+                {
+                    // Abajo
+                    transform.rotation = Quaternion.Euler(90, 180, 0);
+                }
+            }
         }
         
         // Verificar si llegó al punto actual

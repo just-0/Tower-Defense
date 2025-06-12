@@ -149,7 +149,7 @@ public class Turret : MonoBehaviour
 
         if (projectile != null)
         {
-            projectile.Seek(target, turretData.damage);
+            projectile.Seek(target, turretData.damage, turretData.isExplosive, turretData.explosionRadius);
         }
         else
         {

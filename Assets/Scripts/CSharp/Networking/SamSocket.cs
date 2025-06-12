@@ -220,8 +220,8 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         if (gridPos.valid && turretManager != null)
             {
             Vector3 worldPosition = ConvertGridToWorld(gridPos.x, gridPos.y);
-            turretManager.PlaceDefaultTurret(worldPosition);
-            Debug.Log($"Solicitud para colocar torreta en: {worldPosition}");
+            turretManager.PlaceSelectedTurret(worldPosition);
+            Debug.Log($"Solicitud para colocar la torreta seleccionada en: {worldPosition}");
             }
         }
 

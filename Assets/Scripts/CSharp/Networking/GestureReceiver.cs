@@ -44,21 +44,20 @@ public class GestureReceiver : MonoBehaviour
         receivedTexture = new Texture2D(2, 2);
         if (SAM == null) 
         {
-            Debug.LogError("GestureReceiver: SAMController (SAMSystemController) no está asignado.");
+            //Debug.LogError("GestureReceiver: SAMController (SAMSystemController) no está asignado.");
         }
         else if (!(SAM is SAMSystemController))
         {
-            Debug.LogWarning("GestureReceiver: La referencia SAM no es del tipo SAMSystemController. Verifica la asignación en el Inspector.");
+            //Debug.LogWarning("GestureReceiver: La referencia SAM no es del tipo SAMSystemController. Verifica la asignación en el Inspector.");
         }
 
         websocket = new WebSocket("ws://localhost:8768");
 
-        websocket.OnOpen += () => Debug.Log("Conexión abierta al servidor de rastreo de dedos");
-        websocket.OnError += (errorMsg) => Debug.LogError($"Error en WebSocket: {errorMsg}");
+        websocket.OnOpen += () => { /*Debug.Log("Conexión abierta al servidor de rastreo de dedos");*/ };
+        websocket.OnError += (errorMsg) => { /*Debug.LogError($"Error en WebSocket: {errorMsg}");*/ };
         websocket.OnClose += (code) => {
-            Debug.Log($"Conexión cerrada con código: {code}");
+            //Debug.Log($"Conexión cerrada con código: {code}");
             
-            // Marcar las cámaras como desconectadas
             InitialSceneLoader.SetCamerasConnected(false);
         };
         
@@ -94,7 +93,6 @@ public class GestureReceiver : MonoBehaviour
         websocket?.DispatchMessageQueue();
     #endif
 
-        // Verificar si la cámara de dedos está conectada
         if (!connectionChecked)
         {
             connectionTimer += Time.deltaTime;
@@ -103,11 +101,9 @@ public class GestureReceiver : MonoBehaviour
             {
                 connectionChecked = true;
                 
-                // Si no se ha recibido ningún frame de la cámara de dedos después del timeout,
-                // redirigir a la escena de verificación de cámaras
                 if (!fingerCameraConnected)
                 {
-                    Debug.LogWarning("No se detectó conexión con la cámara de dedos. Redirigiendo a la escena de verificación.");
+                    //Debug.LogWarning("No se detectó conexión con la cámara de dedos. Redirigiendo a la escena de verificación.");
                     SceneManager.LoadScene("CameraVerification");
                 }
             }
@@ -119,15 +115,13 @@ public class GestureReceiver : MonoBehaviour
 
     private void HandleGestureDetection()
     {
-        // Si estamos esperando respuesta del servidor, verificar timeout
         if (waitingForServerResponse)
         {
             serverResponseTimer += Time.deltaTime;
             
-            // Si ha pasado el timeout, reactivar gestos
             if (serverResponseTimer >= serverResponseTimeout)
             {
-                Debug.LogWarning("Timeout esperando respuesta del servidor - reactivando gestos");
+                //Debug.LogWarning("Timeout esperando respuesta del servidor - reactivando gestos");
                 waitingForServerResponse = false;
                 serverResponseTimer = 0f;
             }
@@ -137,9 +131,10 @@ public class GestureReceiver : MonoBehaviour
                 return;
             }
         }
-
-        bool validGesture = (currentPhase == GamePhase.Planning && currentFingerCount == 3) || 
-                          (currentPhase == GamePhase.Planning && currentFingerCount == 5);
+        
+        bool isPlanningGesture = currentPhase == GamePhase.Planning && (currentFingerCount == 3 || currentFingerCount == 5);
+        bool isCombatExitGesture = currentPhase == GamePhase.Combat && currentFingerCount == 4;
+        bool validGesture = isPlanningGesture || isCombatExitGesture;
 
         if (validGesture)
         {
@@ -153,20 +148,26 @@ public class GestureReceiver : MonoBehaviour
                 if (currentFingerCount == 3)
                 {
                     waitingForServerResponse = true;
-                    waitingForCombatResponse = false; // Es PROCESS_SAM
-                    serverResponseTimer = 0f; // Reiniciar timer
+                    waitingForCombatResponse = false;
+                    serverResponseTimer = 0f;
                     currentFingerCount = 0;
                     if (SAM != null) SAM.SendMessage("PROCESS_SAM");
-                    else Debug.LogError("GestureReceiver: SAM (SAMSystemController) es nulo, no se puede enviar PROCESS_SAM");
+                    else { /*Debug.LogError("GestureReceiver: SAM es nulo, no se puede enviar PROCESS_SAM");*/ }
                 }
                 else if (currentFingerCount == 5)
                 {
-                    currentPhase = GamePhase.Combat;
+                    ChangePhase(GamePhase.Combat);
                     waitingForServerResponse = true;
-                    waitingForCombatResponse = true; // Es START_COMBAT
-                    serverResponseTimer = 0f; // Reiniciar timer
+                    waitingForCombatResponse = true;
+                    serverResponseTimer = 0f;
                     if (SAM != null) SAM.SendMessage("START_COMBAT");
-                    else Debug.LogError("GestureReceiver: SAM (SAMSystemController) es nulo, no se puede enviar START_COMBAT");
+                    else { /*Debug.LogError("GestureReceiver: SAM es nulo, no se puede enviar START_COMBAT");*/ }
+                }
+                else if (currentFingerCount == 4)
+                {
+                    ChangePhase(GamePhase.Planning);
+                    if (SAM != null) SAM.SendMessage("STOP_COMBAT");
+                    else { /*Debug.LogError("GestureReceiver: SAM es nulo, no se puede enviar STOP_COMBAT");*/ }
                 }
             }
         }
@@ -209,10 +210,13 @@ public class GestureReceiver : MonoBehaviour
 
     private void HandleCombatActions()
     {
-        // Espacio para implementar lógica de combate
-       // Debug.Log($"Acción de combate con {currentFingerCount} dedos");
-        
-       
+        if (currentFingerCount >= 1 && currentFingerCount <= 3)
+        {
+            if (TurretManager.Instance != null)
+            {
+                TurretManager.Instance.SelectTurret(currentFingerCount - 1);
+            }
+        }
     }
 
     private void UpdatePhaseDisplay()
@@ -234,20 +238,31 @@ public class GestureReceiver : MonoBehaviour
             
             phaseDisplayText.text = currentPhase == GamePhase.Planning
                 ? $"Fase: Planificación\n3 dedos: Procesar SAM\n5 dedos: Ir a Combate\nProgreso: {(holdTimer/requiredHoldTime*100).ToString("0")}%\n{statusText}"
-                : $"Fase: Combate\nDedos detectados: {currentFingerCount}";
+                : $"Fase: Combate\nDedos detectados: {currentFingerCount}\n(4 dedos para salir)";
+        }
+    }
+    
+    private void ChangePhase(GamePhase newPhase)
+    {
+        if (currentPhase == newPhase) return;
+
+        currentPhase = newPhase;
+        //Debug.Log($"Cambiando a fase: {currentPhase}");
+        
+        if (UIManager.Instance != null)
+        {
+            UIManager.Instance.SetCombatUIVisibility(currentPhase == GamePhase.Combat);
         }
     }
 
-    // Método público para que SAMController notifique que recibió respuesta del servidor
     public void OnServerResponseReceived()
     {
         waitingForServerResponse = false;
         waitingForCombatResponse = false;
-        serverResponseTimer = 0f; // Resetear timer
-        Debug.Log("Respuesta del servidor recibida - gestos habilitados nuevamente");
+        serverResponseTimer = 0f;
+        //Debug.Log("Respuesta del servidor recibida - gestos habilitados nuevamente");
     }
 
-    // Método específico para notificar que el modo combate ha iniciado (recibió primer frame)
     public void OnCombatModeStarted()
     {
         if (waitingForCombatResponse)
@@ -255,7 +270,7 @@ public class GestureReceiver : MonoBehaviour
             waitingForServerResponse = false;
             waitingForCombatResponse = false;
             serverResponseTimer = 0f;
-            Debug.Log("Modo combate iniciado - gestos habilitados nuevamente");
+            //Debug.Log("Modo combate iniciado - gestos habilitados nuevamente");
         }
     }
 
