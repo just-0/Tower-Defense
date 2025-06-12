@@ -11,7 +11,7 @@ GameObject:
   - component: {fileID: 4779222424309044}
   - component: {fileID: 33878293007528876}
   - component: {fileID: 23364559723917138}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: CannonG_Plate00
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -27,7 +27,7 @@ Transform:
   m_GameObject: {fileID: 1011882321436150}
   serializedVersion: 2
   m_LocalRotation: {x: 0.000000021855694, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -0, y: 0, z: 0}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -97,7 +97,7 @@ GameObject:
   - component: {fileID: 4905286732937208}
   - component: {fileID: 198190432169522098}
   - component: {fileID: 199449255769242030}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: FireFx
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -4883,7 +4883,6 @@ ParticleSystemRenderer:
   m_RendererPriority: 0
   m_Materials:
   - {fileID: 10301, guid: 0000000000000000f000000000000000, type: 0}
-  - {fileID: 0}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -4947,7 +4946,7 @@ GameObject:
   - component: {fileID: 4914773783399600}
   - component: {fileID: 33557720888194326}
   - component: {fileID: 23430875037819608}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: CannonG_Guard00
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -5033,7 +5032,7 @@ GameObject:
   - component: {fileID: 4597034265451690}
   - component: {fileID: 33575077343818718}
   - component: {fileID: 23884825674443308}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: CannonG_Barrel02
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -5118,7 +5117,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 4722236510932744}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: Turret
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -5151,7 +5150,8 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 4595654756050798}
-  m_Layer: 0
+  - component: {fileID: 848661452973082260}
+  m_Layer: 8
   m_Name: FattyCannonG02
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -5175,6 +5175,21 @@ Transform:
   - {fileID: 4779222424309044}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &848661452973082260
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1875090778556656}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fe829841fb0eaf470b68d5d0f851010c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  partToRotate: {fileID: 4722236510932744}
+  firePoint: {fileID: 4703932692914808}
+  turnSpeed: 10
 --- !u!1 &1931211189434318
 GameObject:
   m_ObjectHideFlags: 0
@@ -5184,7 +5199,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 4703932692914808}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: ShootPoint
   m_TagString: Untagged
   m_Icon: {fileID: 0}

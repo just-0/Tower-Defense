@@ -47,6 +47,7 @@ MESSAGE_TYPE_MASK = 3
 MESSAGE_TYPE_PATH = 4
 MESSAGE_TYPE_FINGER_COUNT = 5  # New message type for finger count
 MESSAGE_TYPE_GRID_POSITION = 6  # New message type for grid position
+MESSAGE_TYPE_GRID_CONFIRMATION = 7 # New message for confirmed grid position
 
 # Mask validation settings
 MIN_BLACK_RATIO = 0.05

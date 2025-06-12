@@ -1,47 +1,38 @@
 using UnityEngine;
 using System.Collections.Generic;
+using System.Linq;
 
 public class Turret : MonoBehaviour
 {
     public TurretData turretData { get; private set; }
 
     private Transform target;
-    private float fireCountdown = 0f;
-    private List<Monster> monstersInRange = new List<Monster>(); // Para un mejor manejo de objetivos
+    // La lista monstersInRange ya no es necesaria con el nuevo método
+    // private float fireCountdown = 0f; // Eliminado, no se usaba
 
     [Header("Unity Setup - Opcional, puede asignarse dinámicamente")]
+    [Tooltip("Asigna aquí la parte de la torreta que debe girar, ej: el objeto 'CannonG_Barrel02' del prefab.")]
     public Transform partToRotate; // Parte de la torreta que rota para apuntar (ej. cabeza)
+    [Tooltip("Asigna el punto exacto desde donde debe salir el disparo, ej: el objeto 'ShootPoint' del prefab.")]
     public Transform firePoint;    // Punto desde donde se disparan los proyectiles
     public float turnSpeed = 10f;
+    private float fireCountdown = 0f;
+
 
     public void Initialize(TurretData data)
     {
         turretData = data;
-        // Aplicar cualquier configuración inicial basada en turretData si es necesario
-        // Por ejemplo, si el prefab no tiene un SphereCollider para el rango,
-        // podrías añadirlo y configurarlo aquí.
-        SphereCollider rangeCollider = GetComponent<SphereCollider>();
-        if (rangeCollider == null)
-        {
-            rangeCollider = gameObject.AddComponent<SphereCollider>();
-        }
-        rangeCollider.isTrigger = true;
-        rangeCollider.radius = turretData.range;
+        // La configuración del SphereCollider ya no es necesaria, la detección es activa
+        Debug.Log($"<color=cyan>--- INICIALIZANDO TORRETA ACTIVA: {turretData.turretName} ---</color>");
 
         if (partToRotate == null)
         {
-            // Intenta encontrar una parte llamada "Head" o similar, o usa el transform principal
-            Transform head = transform.Find("Head"); // Asume una convención de nombrado
-            if (head != null) partToRotate = head;
-            else partToRotate = transform; 
+            partToRotate = transform.Find("CannonG_Barrel02") ?? transform.Find("Turret") ?? transform;
         }
 
         if (firePoint == null)
         {
-            // Intenta encontrar un firepoint, o usa la posición de la torreta
-            Transform fp = transform.Find("FirePoint"); // Asume una convención de nombrado
-            if (fp != null) firePoint = fp;
-            else firePoint = transform;
+            firePoint = transform.Find("ShootPoint") ?? transform;
         }
     }
 
@@ -51,45 +42,98 @@ public class Turret : MonoBehaviour
 
         UpdateTarget();
 
-        if (target != null)
+        // Si no tenemos un objetivo, no hacemos nada más.
+        if (target == null)
         {
-            LockOnTarget();
-
-            if (fireCountdown <= 0f)
-            {
-                Shoot();
-                fireCountdown = 1f / turretData.fireRate;
-            }
+            return;
         }
 
+        // Si tenemos un objetivo, procedemos a apuntar y disparar.
+        LockOnTarget();
+
+        // El contador solo disminuye si hay un objetivo al que apuntar.
         fireCountdown -= Time.deltaTime;
+
+        if (fireCountdown <= 0f)
+        {
+            Shoot();
+            fireCountdown = 1f / turretData.fireRate; // Reiniciar contador
+        }
     }
 
     void UpdateTarget()
     {
-        // Limpiar monstruos muertos o fuera de rango de la lista
-        monstersInRange.RemoveAll(monster => monster == null || !monster.gameObject.activeInHierarchy || Vector3.Distance(transform.position, monster.transform.position) > turretData.range);
+        // 1. Detectar todos los colliders dentro del rango de la torreta
+        Collider[] colliders = Physics.OverlapSphere(transform.position, turretData.range);
 
-        if (monstersInRange.Count == 0)
+        // 2. Encontrar el monstruo más cercano de entre todos los colliders detectados
+        Transform nearestMonster = null;
+        float shortestDistance = Mathf.Infinity;
+
+        foreach (Collider collider in colliders)
         {
-            target = null;
-            return;
+            Monster monster = collider.GetComponent<Monster>();
+            if (monster != null)
+            {
+                float distanceToMonster = Vector3.Distance(transform.position, monster.transform.position);
+                if (distanceToMonster < shortestDistance)
+                {
+                    shortestDistance = distanceToMonster;
+                    nearestMonster = monster.transform;
+                }
+            }
         }
 
-        // Estrategia simple: el primer monstruo en la lista (el que entró primero en rango y sigue vivo)
-        // Se podría mejorar con otras lógicas (más cercano, más vida, etc.)
-        target = monstersInRange[0].transform;
+        // 3. Asignar el monstruo más cercano como objetivo
+        if (nearestMonster != null)
+        {
+            // Si encontramos un objetivo y es DIFERENTE al que ya teníamos...
+            if (target != nearestMonster)
+            {
+                target = nearestMonster;
+                // ...reiniciamos el contador para simular un tiempo de "fijar blanco".
+                fireCountdown = 1f / turretData.fireRate;
+                Debug.Log($"<color=green>Nuevo objetivo adquirido: {target.name} a {shortestDistance}m</color>");
+            }
+        }
+        else
+        {
+            target = null;
+        }
     }
+
 
     void LockOnTarget()
     {
-        if (partToRotate == null) return;
+        if (partToRotate == null || target == null) return;
 
-        Vector3 dir = target.position - partToRotate.position;
-        Quaternion lookRotation = Quaternion.LookRotation(dir);
-        // Solo rotar en Y para torretas terrestres, o ajustar según necesidad
-        Vector3 rotation = Quaternion.Lerp(partToRotate.rotation, lookRotation, Time.deltaTime * turnSpeed).eulerAngles;
-        partToRotate.rotation = Quaternion.Euler(0f, rotation.y, 0f); // O Quaternion.Euler(rotation.x, rotation.y, rotation.z) si es torreta 3D
+        // --- Lógica de Rotación 2D en un Plano ---
+
+        // 1. Definimos el "suelo" o "pared" del juego. Nuestro eje de rotación será perpendicular a este plano.
+        //    Como la cámara mira en Z, la pared es el plano XY. El eje de rotación es el eje Z (Vector3.forward).
+        Vector3 rotationAxis = Vector3.forward;
+
+        // 2. Definimos la dirección "cero" de la torreta. Con la rotación base de (-90,0,0),
+        //    la parte frontal de la torreta (su eje Z local) apunta hacia ARRIBA en el mundo (Vector3.up).
+        Vector3 defaultAimDirection = Vector3.up;
+
+        // 3. Calculamos la dirección real hacia el objetivo en el plano XY.
+        Vector3 targetDirection = target.position - partToRotate.position;
+        targetDirection.z = 0; // Aplanamos la dirección al plano 2D
+
+        // 4. Calculamos el ángulo que necesitamos girar.
+        //    Usamos SignedAngle para obtener un ángulo positivo o negativo dependiendo de si el objetivo
+        //    está a la izquierda o a la derecha de nuestra dirección por defecto.
+        float angle = Vector3.SignedAngle(defaultAimDirection, targetDirection, rotationAxis);
+
+        // 5. Creamos la rotación final.
+        //    La rotación base (-90,0,0) más la rotación de apuntado que acabamos de calcular.
+        Quaternion baseRotation = Quaternion.Euler(-90, 0, 0);
+        Quaternion aimRotation = Quaternion.AngleAxis(angle, rotationAxis);
+        Quaternion finalRotation = aimRotation * baseRotation; // El orden es importante
+
+        // 6. Aplicamos la rotación suavemente.
+        partToRotate.rotation = Quaternion.Slerp(partToRotate.rotation, finalRotation, Time.deltaTime * turnSpeed);
     }
 
     void Shoot()
@@ -101,17 +145,15 @@ public class Turret : MonoBehaviour
         }
 
         GameObject projectileGO = Instantiate(turretData.projectilePrefab, firePoint.position, firePoint.rotation);
-        Projectile projectile = projectileGO.GetComponent<Projectile>(); // Asumiendo que tienes un script Projectile
+        Projectile projectile = projectileGO.GetComponent<Projectile>();
 
         if (projectile != null)
         {
-            projectile.Seek(target, turretData.damage); // El proyectil necesita un método Seek(Transform target, int damage)
+            projectile.Seek(target, turretData.damage);
         }
         else
         {
             Debug.LogWarning($"El prefab {turretData.projectilePrefab.name} no tiene un componente Projectile.");
-            // Como alternativa, podrías aplicar daño directo aquí si no usas proyectiles físicos
-            // o manejar la lógica del proyectil de otra forma.
         }
 
         // Efectos visuales y de sonido de disparo
@@ -121,46 +163,26 @@ public class Turret : MonoBehaviour
         }
         if (turretData.firingSound != null)
         {
-            // Deberías tener un AudioSource en la torreta o un gestor de audio global
             AudioSource audioSource = GetComponent<AudioSource>();
             if (audioSource == null) audioSource = gameObject.AddComponent<AudioSource>();
             audioSource.PlayOneShot(turretData.firingSound);
         }
-
-        // Debug.Log($"{turretData.turretName} disparando a {target.name}");
     }
 
-    // Estos métodos se llaman por los mensajes de Unity OnTriggerEnter/Exit
-    void OnTriggerEnter(Collider other)
-    {
-        Monster monster = other.GetComponent<Monster>();
-        if (monster != null && !monstersInRange.Contains(monster))
-        {
-            monstersInRange.Add(monster);
-        }
-    }
-
-    void OnTriggerExit(Collider other)
-    {
-        Monster monster = other.GetComponent<Monster>();
-        if (monster != null && monstersInRange.Contains(monster))
-        {
-            monstersInRange.Remove(monster);
-        }
-    }
+    // Los métodos OnTriggerEnter y OnTriggerExit ya no son necesarios
 
     // Para dibujar el rango en el editor
     void OnDrawGizmosSelected()
     {
+        Gizmos.color = Color.red;
         if (turretData != null)
         {
-            Gizmos.color = Color.red;
             Gizmos.DrawWireSphere(transform.position, turretData.range);
         }
         else
         {
-            Gizmos.color = Color.yellow;
-            Gizmos.DrawWireSphere(transform.position, 5f); // Rango por defecto para gizmo si no hay data
+            // Usar un valor por defecto si turretData no está asignado aún
+            Gizmos.DrawWireSphere(transform.position, 10f); 
         }
     }
 }

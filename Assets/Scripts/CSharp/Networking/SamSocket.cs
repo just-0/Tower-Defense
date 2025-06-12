@@ -38,6 +38,7 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
     [SerializeField] private GestureReceiver gestureReceiver; // Referencia a GestureReceiver para notificar respuestas del servidor
     [SerializeField] private MonsterManager monsterManager; // Referencia al MonsterManager para las oleadas de monstruos
     [SerializeField] private MainWebSocketClient mainWebSocketClient; // Referencia al nuevo cliente WebSocket
+    [SerializeField] private TurretManager turretManager;
     
     private Texture2D cameraTexture;
     private Texture2D maskTexture;
@@ -66,6 +67,7 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
     private Vector3 targetCursorPosition;
     private float cursorSmoothSpeed = 20f;
     private bool debugSpheresCreated = false; // Para crear las esferas de debug solo una vez
+    private bool isCursorVisible = false;
 
     void Start()
     {
@@ -99,13 +101,25 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             mainWebSocketClient.OnProcessingCompleteReceived += HandleProcessingComplete;
             mainWebSocketClient.OnSamMaskReceived += HandleSamMaskMessage;
             mainWebSocketClient.OnPathPointsReceived += HandlePathPointsMessage;
-            mainWebSocketClient.OnGridPositionReceived += HandleGridPositionMessage;
+            mainWebSocketClient.OnGridPositionReceived += HandleGridPosition;
+            mainWebSocketClient.OnGridPositionConfirmed += HandleGridConfirmation;
             // Podríamos también suscribirnos a OnError y OnClose si necesitamos lógica específica aquí
         }
         else
         {
             Debug.LogError("SAMSystemController: MainWebSocketClient no está asignado. No se pueden suscribir eventos.");
         }
+
+        if (turretManager == null)
+        {
+            Debug.LogError("SamSocket: TurretManager no está asignado. Buscando en la escena...");
+            turretManager = FindObjectOfType<TurretManager>();
+            if (turretManager == null) {
+                 Debug.LogError("SamSocket: No se pudo encontrar TurretManager en la escena.");
+            }
+        }
+
+        SetCursorVisibility(false);
     }
 
     // Los métodos ConnectToServer, ProcessIncomingMessage, ProcessMessageFromQueue han sido eliminados
@@ -189,22 +203,47 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         }
     }
 
-    private void HandleGridPositionMessage(byte[] messageData)
+    private void HandleGridPosition(byte[] messageData)
     {
-        try
-        {
-            string jsonGrid = Encoding.UTF8.GetString(messageData);
-            GridPosition gridPos = JsonUtility.FromJson<GridPosition>(jsonGrid);
-            
-            if (gridCursor != null && validPositionMaterial != null && invalidPositionMaterial != null)
+        if (!isCursorVisible) SetCursorVisibility(true);
+
+        string json = Encoding.UTF8.GetString(messageData);
+        GridPosition gridPos = JsonUtility.FromJson<GridPosition>(json);
+        UpdateGridCursor(gridPos);
+    }
+
+    private void HandleGridConfirmation(byte[] messageData)
+    {
+        string json = Encoding.UTF8.GetString(messageData);
+        GridPosition gridPos = JsonUtility.FromJson<GridPosition>(json);
+
+        if (gridPos.valid && turretManager != null)
             {
-                UpdateGridCursor(gridPos); // La lógica de UpdateGridCursor se mantiene
+            Vector3 worldPosition = ConvertGridToWorld(gridPos.x, gridPos.y);
+            turretManager.PlaceDefaultTurret(worldPosition);
+            Debug.Log($"Solicitud para colocar torreta en: {worldPosition}");
             }
         }
-        catch (Exception e)
+
+    private Vector3 ConvertGridToWorld(float gridX, float gridY)
         {
-            Debug.LogError($"Error al procesar posición de cuadrícula: {e.Message}");
+        if (Camera.main == null) {
+            Debug.LogError("ConvertGridToWorld: Camera.main es nula.");
+            return Vector3.zero;
         }
+
+        float orthoHeight = Camera.main.orthographicSize;
+        float orthoWidth = orthoHeight * Camera.main.aspect;
+        float originalWidth = 640f;  // Ancho de la cámara de Python
+        float originalHeight = 480f; // Alto de la cámara de Python
+        float scaleX = (orthoWidth * 2f) / originalWidth;
+        float scaleY = (orthoHeight * 2f) / originalHeight;
+
+        float worldX = (gridX - originalWidth / 2f) * scaleX;
+        float worldY = -(gridY - originalHeight / 2f) * scaleY;
+
+        // La posición Z puede necesitar ajuste dependiendo de tu configuración de cámara
+        return new Vector3(worldX, worldY, 0); 
     }
 
     private void DrawPath(Vector2Serializable[] pathPoints) 
@@ -555,7 +594,17 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             mainWebSocketClient.OnProcessingCompleteReceived -= HandleProcessingComplete;
             mainWebSocketClient.OnSamMaskReceived -= HandleSamMaskMessage;
             mainWebSocketClient.OnPathPointsReceived -= HandlePathPointsMessage;
-            mainWebSocketClient.OnGridPositionReceived -= HandleGridPositionMessage;
+            mainWebSocketClient.OnGridPositionReceived -= HandleGridPosition;
+            mainWebSocketClient.OnGridPositionConfirmed -= HandleGridConfirmation;
+        }
+    }
+
+    public void SetCursorVisibility(bool visible)
+    {
+        isCursorVisible = visible;
+        if (gridCursor != null)
+        {
+            gridCursor.SetActive(visible);
         }
     }
 } 

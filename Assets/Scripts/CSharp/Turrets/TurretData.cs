@@ -13,7 +13,7 @@ public class TurretData : ScriptableObject
     [Header("Combat Attributes")]
     public float fireRate = 1f; // Disparos por segundo
     public float range = 10f;   // Rango de ataque
-    public int damage = 10;
+    public float damage = 20f;
 
     [Header("Visuals & SFX - Opcional")]
     public ParticleSystem placementEffect;

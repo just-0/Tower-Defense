@@ -54,6 +54,11 @@ public class TurretManager : MonoBehaviour
         Debug.Log($"Colocando torreta {turretType.turretName} en {worldPosition}");
 
         GameObject turretGO = Instantiate(turretType.turretPrefab, worldPosition, Quaternion.identity, turretsParent);
+        
+        // Ajustar la escala y rotación inicial de la torreta instanciada
+        turretGO.transform.localScale = new Vector3(0.2f, 0.2f, 0.2f);
+        turretGO.transform.rotation = Quaternion.Euler(-90f, 0f, 0f);
+
         Turret turretComponent = turretGO.GetComponent<Turret>();
 
         if (turretComponent != null)

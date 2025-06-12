@@ -25,7 +25,7 @@ from config.settings import (
     MESSAGE_TYPE_FINGER_COUNT, FINGER_CAMERA_INDEX, FINGER_CAMERA_WIDTH,
     FINGER_CAMERA_HEIGHT, FINGER_CAMERA_FPS, FINGER_TRANSMISSION_FPS,
     MESSAGE_TYPE_GRID_POSITION, CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT,
-    CAMERA_FPS
+    CAMERA_FPS, MESSAGE_TYPE_GRID_CONFIRMATION
 )
 
 class WebSocketServer:
@@ -516,6 +516,17 @@ class WebSocketServer:
                     # Notificar confirmaciones
                     if is_confirmed and selected_cell:
                         print(f"INFO: Celda confirmada: {selected_cell}")
+                        row, col = selected_cell
+                        center = finger_detector.grid_system.get_cell_center(row, col)
+                        if center:
+                            is_valid = not finger_detector.grid_system.is_cell_occupied(row, col)
+                            if is_valid:
+                                x = float(center[0])
+                                y = float(center[1])
+                                confirmed_data = {"x": x, "y": y, "valid": True}
+                                json_data = json.dumps(confirmed_data)
+                                await websocket.send(bytes([MESSAGE_TYPE_GRID_CONFIRMATION]) + json_data.encode('utf-8'))
+                                print(f"Sent grid confirmation for cell {selected_cell}")
                     
                     # Métricas de rendimiento
                     frame_count += 1

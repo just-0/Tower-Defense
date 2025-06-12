@@ -48,8 +48,7 @@ public class MonsterManager : MonoBehaviour
         currentPath = new List<Vector3>(newPath);
         hasValidPath = currentPath != null && currentPath.Count > 0;
         
-        Debug.Log($"MonsterManager: Path actualizado con {currentPath.Count} puntos");
-        
+                
         // Si tenemos un path válido y no hay oleada en progreso, iniciar la primera oleada
         if (hasValidPath && !waveInProgress)
         {
@@ -86,14 +85,14 @@ public class MonsterManager : MonoBehaviour
             yield return new WaitForSeconds(timeBetweenMonsters);
         }
         
-        Debug.Log($"Todos los monstruos de la oleada {currentWave} han sido generados");
+        
     }
     
     private void SpawnMonster()
     {
         if (monsterPrefab == null || !hasValidPath)
         {
-            Debug.LogWarning("MonsterManager: No se puede generar monstruo - falta prefab o path");
+           
             return;
         }
         
@@ -117,7 +116,7 @@ public class MonsterManager : MonoBehaviour
         activeMonsters.Add(monster);
         monstersAlive++;
         
-        Debug.Log($"Monstruo generado. Monstruos vivos: {monstersAlive}");
+      
     }
     
     private void ConfigureMonsterStats(Monster monster)
@@ -135,14 +134,14 @@ public class MonsterManager : MonoBehaviour
     {
         RemoveMonster(monster);
         // Aquí podrías añadir oro al jugador, etc.
-        Debug.Log($"Monstruo murió. Monstruos restantes: {monstersAlive}");
+       
     }
     
     private void OnMonsterReachedEnd(Monster monster)
     {
         RemoveMonster(monster);
         // Aquí podrías reducir vida de la base, etc.
-        Debug.Log($"Monstruo llegó al final. Monstruos restantes: {monstersAlive}");
+       
     }
     
     private void RemoveMonster(Monster monster)
@@ -166,7 +165,7 @@ public class MonsterManager : MonoBehaviour
     {
         waveInProgress = false;
         
-        Debug.Log($"Oleada {currentWave} completada");
+        
         OnWaveComplete?.Invoke(currentWave);
         
         // Iniciar la siguiente oleada después de un delay
@@ -201,7 +200,7 @@ public class MonsterManager : MonoBehaviour
         activeMonsters.Clear();
         monstersAlive = 0;
         
-        Debug.Log("Todas las oleadas detenidas y monstruos eliminados");
+       
     }
     
     public void ResetWaves()
