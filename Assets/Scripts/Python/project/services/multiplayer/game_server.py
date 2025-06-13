@@ -128,38 +128,65 @@ class GameServer:
             print(f"Error in send_planning_frames: {e}")
 
     async def process_sam(self, websocket):
-        """Process the current frame with SAM and send the result."""
-        if not self.planning_camera_manager.is_running:
-            self.planning_camera_manager.start_camera()
-            await asyncio.sleep(1.5)
+        """Process the current frame with SAM and send the result, with error handling."""
+        print("Starting SAM process...")
+        try:
+            if not self.planning_camera_manager.is_running:
+                self.planning_camera_manager.start_camera()
+                await asyncio.sleep(1.5)
 
-        frame = self.planning_camera_manager.get_current_frame()
-        if frame is None:
-            print("Could not get frame for SAM processing.")
-            return
+            frame = self.planning_camera_manager.get_current_frame()
+            if frame is None:
+                print("Error: Could not get frame for SAM processing.")
+                return
 
-        if frame.shape[2] == 3:
-            frame_bgr_for_aruco = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        else:
-            frame_bgr_for_aruco = frame
+            print("Frame acquired, detecting ArUco marker...")
+            if frame.shape[2] == 3:
+                frame_bgr_for_aruco = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            else:
+                frame_bgr_for_aruco = frame
 
-        ids, centers, aruco_corners, _ = self.aruco_detector.detect(frame_bgr_for_aruco, draw=False)
-        
-        goal = None
-        if centers and len(centers) > 0:
-            cx, cy = centers[0]
-            goal = (int(cy), int(cx))
-        
-        mask_bytes = self.sam_processor.process_image(frame, scene_type="pared", aruco_corners=aruco_corners)
-        
-        if mask_bytes:
+            ids, centers, aruco_corners, _ = self.aruco_detector.detect(frame_bgr_for_aruco, draw=False)
+            
+            goal = None
+            if centers and len(centers) > 0:
+                cx, cy = centers[0]
+                goal = (int(cy), int(cx))
+                print(f"ArUco marker found at {goal}.")
+            else:
+                print("Warning: ArUco marker not found.")
+            
+            print("Processing frame with SAM...")
+            mask_bytes = self.sam_processor.process_image(frame, scene_type="pared", aruco_corners=aruco_corners)
+            
+            if not mask_bytes:
+                print("Error: SAM processing did not return a mask.")
+                return
+
             await websocket.send(bytes([MESSAGE_TYPE_MASK]) + mask_bytes)
+            print("Mask sent. Calculating A* path...")
+
             path = handle_astar_from_mask(mask_bytes, False, goal=goal)
             if path:
                 path_data = [{"x": x, "y": y} for x, y in path]
                 path_json = json.dumps(path_data)
                 await websocket.send(bytes([MESSAGE_TYPE_PATH]) + path_json.encode('utf-8'))
-                print("Sent SAM Mask and Path.")
+                print("Path sent successfully.")
+            else:
+                print("Warning: A* path could not be calculated.")
+
+        except Exception as e:
+            import traceback
+            print("--- FATAL ERROR DURING SAM PROCESSING ---")
+            print(f"Error Type: {type(e).__name__}")
+            print(f"Error Message: {e}")
+            traceback.print_exc()
+            print("-----------------------------------------")
+        finally:
+            # Always ensure the planning camera is stopped after the process to free the resource
+            if self.planning_camera_manager.is_running:
+                self.planning_camera_manager.stop_camera()
+                print("Planning camera stopped after SAM process.")
 
     async def handle_combat_mode(self, websocket):
         """Handle the combat mode with dedicated, threaded finger detection."""
@@ -187,10 +214,8 @@ class GameServer:
                         time.sleep(0.01)
                         continue
                     if frame_queue.full():
-                        try:
-                            frame_queue.get_nowait()
-                        except queue.Empty:
-                            pass
+                        try: frame_queue.get_nowait()
+                        except queue.Empty: pass
                     frame_queue.put(frame)
             finally:
                 if cap and cap.isOpened():
@@ -210,20 +235,34 @@ class GameServer:
 
                 frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                 
-                success, encoded_frame = encode_frame_to_jpeg(frame_bgr, quality=85)
+                # Process the frame to get finger position AND the processed image
+                output_image, _, is_confirmed, selected_cell = self.finger_detector.process_frame(frame_rgb)
+                
+                # Send the PROCESSED image with drawings to Unity
+                success, encoded_frame = encode_frame_to_jpeg(output_image, quality=85)
                 if success:
                     await websocket.send(bytes([MESSAGE_TYPE_CAMERA_FRAME]) + encoded_frame)
-                    
-                result = self.finger_detector.process_frame(frame_rgb)
-                if result:
-                    grid_x, grid_y, is_valid, is_confirmed, _, _ = result
-                    position_data = {"x": grid_x, "y": grid_y, "valid": is_valid}
-                    await websocket.send(bytes([MESSAGE_TYPE_GRID_POSITION]) + json.dumps(position_data).encode('utf-8'))
-                    if is_confirmed:
-                        confirmed_data = {"x": grid_x, "y": grid_y, "valid": is_valid}
-                        await websocket.send(bytes([MESSAGE_TYPE_GRID_CONFIRMATION]) + json.dumps(confirmed_data).encode('utf-8'))
 
-                await asyncio.sleep(1 / (CAMERA_FPS * 1.5))
+                # Send grid position if a finger is pointing at a cell
+                if self.finger_detector.is_pointing and self.finger_detector.current_cell is not None:
+                    row, col = self.finger_detector.current_cell
+                    center = self.finger_detector.grid_system.get_cell_center(row, col)
+                    if center:
+                        is_valid = not self.finger_detector.grid_system.is_cell_occupied(row, col)
+                        position_data = {"x": float(center[0]), "y": float(center[1]), "valid": is_valid}
+                        await websocket.send(bytes([MESSAGE_TYPE_GRID_POSITION]) + json.dumps(position_data).encode('utf-8'))
+
+                # Send confirmation if a cell was selected
+                if is_confirmed and selected_cell is not None:
+                    row, col = selected_cell
+                    center = self.finger_detector.grid_system.get_cell_center(row, col)
+                    if center:
+                        # A confirmed cell is always considered valid for placement intent
+                        confirmed_data = {"x": float(center[0]), "y": float(center[1]), "valid": True}
+                        await websocket.send(bytes([MESSAGE_TYPE_GRID_CONFIRMATION]) + json.dumps(confirmed_data).encode('utf-8'))
+                        print(f"Sent confirmation for cell {selected_cell}")
+
+                await asyncio.sleep(1 / (CAMERA_FPS * 1.2))
 
         except asyncio.CancelledError:
             is_active = False

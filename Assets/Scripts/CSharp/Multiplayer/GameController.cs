@@ -50,6 +50,23 @@ public class GameController : MonoBehaviour
         {
             Debug.LogError("[GameController] Cannot execute phase command because SAMSystemController is not assigned.");
         }
+
+        // Also handle UI state changes here, based on the original game flow.
+        if (UIManager.Instance != null)
+        {
+            if (phaseCommand == "START_COMBAT")
+            {
+                UIManager.Instance.SetCombatUIVisibility(true);
+            }
+            else if (phaseCommand == "STOP_COMBAT")
+            {
+                UIManager.Instance.SetCombatUIVisibility(false);
+            }
+        }
+        else
+        {
+            Debug.LogWarning("[GameController] UIManager.Instance not found. Cannot update combat UI visibility.");
+        }
     }
 
     private void HandleTurretSelection(int turretIndex)

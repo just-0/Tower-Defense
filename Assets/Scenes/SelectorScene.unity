@@ -355,8 +355,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 100, y: 100}
+  m_AnchoredPosition: {x: -519.38184, y: -156}
+  m_SizeDelta: {x: 355.2364, y: 412}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &165396689
 MonoBehaviour:
@@ -645,7 +645,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0, y: 71.9}
+  m_AnchoredPosition: {x: -606, y: 251}
   m_SizeDelta: {x: 160, y: 20}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1018781103
@@ -883,7 +883,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0, y: -112.2}
+  m_AnchoredPosition: {x: -539, y: 141}
   m_SizeDelta: {x: 160, y: 30}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1457202704
@@ -1189,7 +1189,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: -119.7, y: 0}
+  m_AnchoredPosition: {x: -540, y: 91}
   m_SizeDelta: {x: 160, y: 30}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &2087622485
@@ -1303,8 +1303,10 @@ MonoBehaviour:
   statusText: {fileID: 2087622485}
   fingerCountText: {fileID: 1457202704}
   holdProgressSlider: {fileID: 1018781103}
+  phaseText: {fileID: 0}
   gestureServerUrl: ws://localhost:8768
   requiredHoldTime: 3
+  commandCooldown: 3
 --- !u!4 &2147065966
 Transform:
   m_ObjectHideFlags: 0
