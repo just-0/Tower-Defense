@@ -22,7 +22,19 @@ public class LobbyController : MonoBehaviourPunCallbacks
         selectorButton.interactable = true;
         placerButton.interactable = true;
         
-        // El botón de empezar solo lo puede usar el Master Client
+        // Desactivamos el botón al inicio por defecto.
+        // Se activará en OnJoinedRoom o OnMasterClientSwitched si somos el Master.
+        if (startGameButton != null)
+        {
+            startGameButton.gameObject.SetActive(false);
+        }
+    }
+
+    // Este callback se ejecuta CUANDO el jugador local se une a una sala.
+    // ¡Este es el lugar correcto para hacer la primera revisión!
+    public override void OnJoinedRoom()
+    {
+        Debug.Log("Te has unido a una sala. Revisando si eres el Master Client...");
         if (startGameButton != null)
         {
             startGameButton.gameObject.SetActive(PhotonNetwork.IsMasterClient);
@@ -31,7 +43,9 @@ public class LobbyController : MonoBehaviourPunCallbacks
 
     public override void OnMasterClientSwitched(Photon.Realtime.Player newMasterClient)
     {
-        // Si cambia el Master Client, actualizamos quién ve el botón de empezar
+        // Si cambia el Master Client, actualizamos quién ve el botón de empezar.
+        // Esto es crucial si el Master original se desconecta.
+        Debug.Log("El Master Client ha cambiado. Actualizando visibilidad del botón.");
         if (startGameButton != null)
         {
             startGameButton.gameObject.SetActive(PhotonNetwork.IsMasterClient);
