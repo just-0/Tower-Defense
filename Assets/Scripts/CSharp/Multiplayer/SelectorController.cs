@@ -103,7 +103,7 @@ public class SelectorController : MonoBehaviour
             // Turret selection does not require holding
             if (currentFingerCount >= 1 && currentFingerCount <= 3)
             {
-                PhotonManager.Instance.SendTurretSelection(currentFingerCount - 1);
+                PhotonManager.Instance.SendTurretSelect(currentFingerCount - 1);
                 UpdateStatus($"Sent: Select Turret {currentFingerCount}");
                 cooldownTimer = 0.5f; // Short cooldown for turret selection
                 return;

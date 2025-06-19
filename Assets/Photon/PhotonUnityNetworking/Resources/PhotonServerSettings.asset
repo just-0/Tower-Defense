@@ -43,6 +43,7 @@ MonoBehaviour:
   - RPC_ReceiveTurretSelection
   - LoadGameScene
   - StartGameSequence
+  - RPC_ReceiveTurretSelect
   DisableAutoOpenWizard: 1
   ShowSettings: 0
-  DevRegionSetOnce: 0
+  DevRegionSetOnce: 1

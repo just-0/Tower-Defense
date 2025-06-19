@@ -20,13 +20,28 @@ public class PhotonManager : MonoBehaviourPunCallbacks
     {
         if (Instance != null && Instance != this)
         {
+            // Si ya existe una instancia (de una escena anterior), destruimos esta nueva.
+            Debug.Log("Destruyendo instancia duplicada de PhotonManager.");
             Destroy(gameObject);
+            return;
         }
-        else
-        {
-            Instance = this;
-            DontDestroyOnLoad(gameObject);
-        }
+        // Si no existe, nos convertimos en la instancia única.
+        Instance = this;
+        DontDestroyOnLoad(gameObject); // ¡No destruir este objeto al cargar nuevas escenas!
+    }
+
+    public override void OnEnable()
+    {
+        base.OnEnable();
+        // Registrar el método para recibir eventos RPC
+        PhotonNetwork.AddCallbackTarget(this);
+    }
+
+    public override void OnDisable()
+    {
+        base.OnDisable();
+        // Quitar el registro para evitar errores
+        PhotonNetwork.RemoveCallbackTarget(this);
     }
 
     void Start()
@@ -69,36 +84,28 @@ public class PhotonManager : MonoBehaviourPunCallbacks
     }
 
     // Called by the Selector player to send a phase change command.
-    public void SendPhaseChange(string phaseName)
+    public void SendPhaseChange(string phaseCommand)
     {
-        if (PhotonNetwork.InRoom)
-        {
-            photonView.RPC("RPC_ReceivePhaseChange", RpcTarget.Others, phaseName);
-            Debug.Log($"Sent RPC for phase change: {phaseName}");
-        }
+        photonView.RPC("RPC_ReceivePhaseChange", RpcTarget.All, phaseCommand);
     }
 
     // Called by the Selector player to send a turret selection command.
-    public void SendTurretSelection(int turretIndex)
+    public void SendTurretSelect(int turretIndex)
     {
-        if (PhotonNetwork.InRoom)
-        {
-            photonView.RPC("RPC_ReceiveTurretSelection", RpcTarget.Others, turretIndex);
-            Debug.Log($"Sent RPC for turret selection: {turretIndex}");
-        }
+        photonView.RPC("RPC_ReceiveTurretSelect", RpcTarget.All, turretIndex);
     }
 
     [PunRPC]
-    public void RPC_ReceivePhaseChange(string phaseName)
+    private void RPC_ReceivePhaseChange(string phaseCommand)
     {
-        Debug.Log($"Received RPC for phase change: {phaseName}");
-        OnPhaseChangeReceived?.Invoke(phaseName);
+        Debug.Log($"[PhotonManager] RPC de cambio de fase recibido: {phaseCommand}");
+        OnPhaseChangeReceived?.Invoke(phaseCommand);
     }
 
     [PunRPC]
-    public void RPC_ReceiveTurretSelection(int turretIndex)
+    private void RPC_ReceiveTurretSelect(int turretIndex)
     {
-        Debug.Log($"Received RPC for turret selection: {turretIndex}");
+        Debug.Log($"[PhotonManager] RPC de selección de torreta recibido: {turretIndex}");
         OnTurretSelectReceived?.Invoke(turretIndex);
     }
 } 
