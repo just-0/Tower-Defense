@@ -98,15 +98,15 @@ class GestureServer:
             self.finger_counter.stop_camera()
         print("Gesture server cleaned up.")
 
-async def main():
-    """Main function to run the server."""
-    server = GestureServer()
+def create_server():
+    """Create and return the GestureServer instance."""
+    return GestureServer()
+
+async def start_server(server):
+    """Start the server's async tasks."""
     try:
         await server.start()
-    except KeyboardInterrupt:
-        print("Server is shutting down.")
+    except asyncio.CancelledError:
+        print("Gesture server start cancelled.")
     finally:
-        server.cleanup()
-
-if __name__ == "__main__":
-    asyncio.run(main()) 
+        server.cleanup() 

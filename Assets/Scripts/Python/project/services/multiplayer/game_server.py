@@ -278,17 +278,19 @@ class GameServer:
     
     def cleanup(self):
         """Cleanup server resources."""
+        if self.planning_camera_manager.is_running:
+            self.planning_camera_manager.stop_camera()
         print("Game server cleaned up.")
 
-async def main():
-    """Main function to run the server."""
-    server = GameServer()
+def create_server():
+    """Create and return the GameServer instance."""
+    return GameServer()
+
+async def start_server(server):
+    """Start the server's async tasks."""
     try:
         await server.start()
-    except KeyboardInterrupt:
-        print("Server is shutting down.")
+    except asyncio.CancelledError:
+        print("Game server start cancelled.")
     finally:
-        server.cleanup()
-
-if __name__ == "__main__":
-    asyncio.run(main()) 
+        server.cleanup() 
