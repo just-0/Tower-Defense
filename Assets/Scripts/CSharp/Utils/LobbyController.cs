@@ -16,175 +16,165 @@ public class LobbyController : MonoBehaviourPunCallbacks
     [SerializeField] private Button selectorButton;
     [Tooltip("Botón para elegir el rol de Colocador.")]
     [SerializeField] private Button placerButton;
+    [SerializeField] private Text statusText; // Un texto para mostrar el estado
 
     [Header("Game Start Settings")]
-    [Tooltip("Segundos de espera para que el backend del 'Colocador' se inicie antes de cargar la escena. Aumentar si la conexión falla.")]
-    [SerializeField] private float placerBackendStartDelay = 5.0f; // 5 segundos por defecto
     [Tooltip("Tiempo máximo en segundos que se intentará conectar con el backend del Colocador antes de rendirse.")]
     [SerializeField] private float placerConnectionTimeout = 15f;
+    
+    // --- ESTA ES LA PARTE NUEVA PARA LA INSTANCIACIÓN ---
+    private static LobbyController _instance;
+    
+    void Awake()
+    {
+        _instance = this; // Guardamos la referencia a esta instancia
+    }
+    // ---------------------------------------------------
 
     void Start()
     {
-        // Asegúrate de que los botones de rol estén activos al entrar
         selectorButton.interactable = true;
         placerButton.interactable = true;
-        
-        // Desactivamos el botón al inicio por defecto.
-        // Se activará en OnJoinedRoom o OnMasterClientSwitched si somos el Master.
-        if (startGameButton != null)
-        {
-            startGameButton.gameObject.SetActive(false);
-        }
+        startGameButton.gameObject.SetActive(false); // Oculto por defecto
+        statusText.text = "Conectado. ¡Únete a una sala!";
     }
 
-    // Este callback se ejecuta CUANDO el jugador local se une a una sala.
-    // ¡Este es el lugar correcto para hacer la primera revisión!
+    public static void JoinRandomRoom() // Método estático que llamaremos desde la UI
+    {
+         if (PhotonNetwork.IsConnected)
+         {
+             _instance.statusText.text = "Buscando sala...";
+             PhotonNetwork.JoinRandomRoom();
+         }
+    }
+    
+    public override void OnJoinRandomFailed(short returnCode, string message)
+    {
+        statusText.text = "No se encontraron salas. Creando una nueva...";
+        PhotonNetwork.CreateRoom(null, new Photon.Realtime.RoomOptions { MaxPlayers = 2 });
+    }
+
     public override void OnJoinedRoom()
     {
-        Debug.Log("Te has unido a una sala. Revisando si eres el Master Client...");
-        if (startGameButton != null)
-        {
-            startGameButton.gameObject.SetActive(PhotonNetwork.IsMasterClient);
-        }
+        statusText.text = $"¡Unido a la sala! Jugadores: {PhotonNetwork.CurrentRoom.PlayerCount}";
+        UpdateStartButtonVisibility();
+    }
+
+    public override void OnPlayerEnteredRoom(Photon.Realtime.Player newPlayer)
+    {
+        statusText.text = $"¡Se unió un jugador! Jugadores: {PhotonNetwork.CurrentRoom.PlayerCount}";
+        UpdateStartButtonVisibility();
+    }
+    
+    public override void OnPlayerLeftRoom(Photon.Realtime.Player otherPlayer)
+    {
+        statusText.text = $"Un jugador se fue. Jugadores: {PhotonNetwork.CurrentRoom.PlayerCount}";
+        UpdateStartButtonVisibility();
     }
 
     public override void OnMasterClientSwitched(Photon.Realtime.Player newMasterClient)
     {
-        // Si cambia el Master Client, actualizamos quién ve el botón de empezar.
-        // Esto es crucial si el Master original se desconecta.
-        Debug.Log("El Master Client ha cambiado. Actualizando visibilidad del botón.");
-        if (startGameButton != null)
-        {
-            startGameButton.gameObject.SetActive(PhotonNetwork.IsMasterClient);
-        }
+        UpdateStartButtonVisibility();
     }
 
-    // Asigna este método al botón "Ser Selector"
+    private void UpdateStartButtonVisibility()
+    {
+        // El botón de empezar solo lo puede usar el Master Client y cuando hay 2 jugadores
+        bool shouldBeVisible = PhotonNetwork.IsMasterClient && PhotonNetwork.CurrentRoom.PlayerCount == 2;
+        startGameButton.gameObject.SetActive(shouldBeVisible);
+    }
+    
     public void OnSelectRoleSelector()
     {
         localPlayerRole = PlayerRole.Selector;
-        Debug.Log("Has elegido el rol: Selector");
-        // Deshabilitamos los botones para no poder cambiar de rol
         selectorButton.interactable = false;
         placerButton.interactable = false;
     }
 
-    // Asigna este método al botón "Ser Colocador"
     public void OnSelectRolePlacer()
     {
         localPlayerRole = PlayerRole.Placer;
-        Debug.Log("Has elegido el rol: Colocador");
-        // Deshabilitamos los botones
         selectorButton.interactable = false;
         placerButton.interactable = false;
     }
     
-    // Asigna este método al botón "Empezar Partida"
     public void OnStartGameClicked()
     {
+        if (localPlayerRole == PlayerRole.None)
+        {
+            statusText.text = "¡Error: Debes elegir un rol primero!";
+            return;
+        }
         // El Master Client le dice a todos que el juego va a empezar
-        photonView.RPC("StartGameSequence", RpcTarget.All);
+        photonView.RPC("StartGameSequence", RpcTarget.All, localPlayerRole);
     }
 
     [PunRPC]
-    private async void StartGameSequence()
+    private async void StartGameSequence(PlayerRole roleForClient)
     {
-        // Cada cliente (incluido el Master) revisa su rol LOCAL y actúa.
-        if (localPlayerRole == PlayerRole.None)
-        {
-            Debug.LogError("Este jugador no eligió un rol, no se puede cargar la escena.");
-            return;
-        }
+        // CADA CLIENTE REVISA SU PROPIO ROL LOCAL
+        if (this.localPlayerRole == PlayerRole.None) return;
 
-        if (localPlayerRole == PlayerRole.Selector)
+        // Desactivamos la UI del lobby para que no se pueda hacer clic mientras carga
+        selectorButton.interactable = false;
+        placerButton.interactable = false;
+        startGameButton.gameObject.SetActive(false);
+        statusText.text = "Iniciando partida...";
+
+        if (this.localPlayerRole == PlayerRole.Selector)
         {
             await BackendManager.Instance.RequestBackendMode(BackendMode.MultiplayerSelector);
             PhotonNetwork.LoadLevel("4_Game_Selector");
         }
-        else if (localPlayerRole == PlayerRole.Placer)
+        else if (this.localPlayerRole == PlayerRole.Placer)
         {
             await BackendManager.Instance.RequestBackendMode(BackendMode.MultiplayerPlacer);
             
-            // --- NUEVA LÓGICA DE SONDEO INTELIGENTE ---
-            Debug.Log("Intentando conectar con el backend del Colocador...");
+            statusText.text = "Backend del colocador iniciando... por favor espera.";
             bool isBackendReady = await PingServerUntilReady("ws://localhost:8767", placerConnectionTimeout);
 
             if (isBackendReady)
             {
-                Debug.Log("¡Backend del Colocador listo! Cargando escena...");
                 PhotonNetwork.LoadLevel("3_Game_Placer");
             }
             else
             {
-                Debug.LogError($"El backend del Colocador no respondió en {placerConnectionTimeout} segundos. Abortando.");
-                // Aquí podrías mostrar un mensaje de error en la UI y volver al menú.
-                OnLeaveLobby(); 
+                statusText.text = $"Error: El backend no respondió en {placerConnectionTimeout}s.";
+                // Aquí podrías añadir un botón para volver al menú
             }
         }
     }
 
-    /// <summary>
-    /// Intenta conectar a una URL de WebSocket en un bucle hasta que tenga éxito o se agote el tiempo.
-    /// </summary>
-    /// <param name="url">La URL del servidor WebSocket a sondear.</param>
-    /// <param name="timeout">El tiempo máximo de espera en segundos.</param>
-    /// <returns>True si la conexión fue exitosa, false si se agotó el tiempo.</returns>
     private async System.Threading.Tasks.Task<bool> PingServerUntilReady(string url, float timeout)
     {
         float startTime = Time.time;
 
         while (Time.time - startTime < timeout)
         {
-            // Usamos 'var' para que el tipo se infiera a NativeWebSocket.WebSocket
             var testSocket = new WebSocket(url);
-            
             var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>();
 
-            // Definimos los delegados con la firma correcta de NativeWebSocket
-            testSocket.OnOpen += () => 
-            {
-                tcs.TrySetResult(true);
-            };
-
-            testSocket.OnError += (string e) =>
-            {
-                // Imprimimos el error para depuración, pero no lo consideramos fatal aquí.
-                // Simplemente significa que el servidor no está listo todavía.
-                // Debug.Log($"Ping fallido (esperado): {e}");
-                tcs.TrySetResult(false);
-            };
-            
-            // Si el socket se cierra antes de abrirse, es un fallo.
-            testSocket.OnClose += (WebSocketCloseCode code) =>
-            {
-                tcs.TrySetResult(false);
-            };
+            testSocket.OnOpen += () => { tcs.TrySetResult(true); };
+            testSocket.OnError += (string e) => { tcs.TrySetResult(false); };
+            testSocket.OnClose += (WebSocketCloseCode code) => { tcs.TrySetResult(false); };
 
             testSocket.Connect();
 
-            // Esperamos el resultado de OnOpen u OnError/OnClose
             bool success = await tcs.Task;
             
             if (success)
             {
-                await testSocket.Close(); // Cerramos la conexión de prueba
-                return true; // ¡Éxito!
+                await testSocket.Close();
+                return true;
             }
-
-            // Si falla, esperamos un poco antes de reintentar para no sobrecargar.
             await System.Threading.Tasks.Task.Delay(250); 
         }
-
-        return false; // Se agotó el tiempo.
+        return false;
     }
     
     public void OnLeaveLobby()
     {
-         // Para salir del lobby y volver al menú
-         if (PhotonNetwork.InRoom)
-         {
-            PhotonNetwork.LeaveRoom();
-         }
+         if (PhotonNetwork.InRoom) { PhotonNetwork.LeaveRoom(); }
          SceneManager.LoadScene("1_MainMenu");
     }
 }

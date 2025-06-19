@@ -44,17 +44,21 @@ public class PhotonManager : MonoBehaviourPunCallbacks
         PhotonNetwork.RemoveCallbackTarget(this);
     }
 
-    void Start()
+    // AÑADIMOS UN MÉTODO DE CONEXIÓN PÚBLICO
+    public void ConnectToPhoton()
     {
-        Debug.Log("Connecting to Photon...");
-        PhotonNetwork.ConnectUsingSettings();
+        if (!PhotonNetwork.IsConnected)
+        {
+            Debug.Log("Conectando al Master de Photon...");
+            PhotonNetwork.ConnectUsingSettings(); // Usa la configuración de tu archivo PhotonServerSettings
+        }
     }
 
     public override void OnConnectedToMaster()
     {
-        Debug.Log("Connected to Photon Master Server.");
-        // Automatically join a lobby. You can create or join rooms after this.
-        PhotonNetwork.JoinLobby();
+        Debug.Log("¡Conectado al Master de Photon! Ahora se pueden crear o unir a salas.");
+        // A diferencia de antes, no nos unimos a un lobby automáticamente.
+        // Lo haremos desde la UI del Lobby.
     }
 
     public override void OnJoinedLobby()

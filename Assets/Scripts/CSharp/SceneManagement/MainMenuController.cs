@@ -18,6 +18,12 @@ public class MainMenuController : MonoBehaviour
     // Asigna este método al botón "Multijugador"
     public void OnMultiplayerClicked()
     {
+        // Primero, le decimos a Photon que inicie la conexión
+        if(PhotonManager.Instance != null)
+        {
+            PhotonManager.Instance.ConnectToPhoton();
+        }
+        
         // Navega al Lobby para la configuración multijugador
         SceneManager.LoadScene("2_Lobby");
     }
