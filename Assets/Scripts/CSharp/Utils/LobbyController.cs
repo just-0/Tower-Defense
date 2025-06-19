@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.SceneManagement;
 using Photon.Pun;
+using NativeWebSocket; // Asegurarnos de que usamos la librería correcta
 
 public class LobbyController : MonoBehaviourPunCallbacks
 {
@@ -15,6 +16,12 @@ public class LobbyController : MonoBehaviourPunCallbacks
     [SerializeField] private Button selectorButton;
     [Tooltip("Botón para elegir el rol de Colocador.")]
     [SerializeField] private Button placerButton;
+
+    [Header("Game Start Settings")]
+    [Tooltip("Segundos de espera para que el backend del 'Colocador' se inicie antes de cargar la escena. Aumentar si la conexión falla.")]
+    [SerializeField] private float placerBackendStartDelay = 5.0f; // 5 segundos por defecto
+    [Tooltip("Tiempo máximo en segundos que se intentará conectar con el backend del Colocador antes de rendirse.")]
+    [SerializeField] private float placerConnectionTimeout = 15f;
 
     void Start()
     {
@@ -92,14 +99,83 @@ public class LobbyController : MonoBehaviourPunCallbacks
         if (localPlayerRole == PlayerRole.Selector)
         {
             await BackendManager.Instance.RequestBackendMode(BackendMode.MultiplayerSelector);
-            // Photon se encargará de que la carga de la escena esté sincronizada
             PhotonNetwork.LoadLevel("4_Game_Selector");
         }
         else if (localPlayerRole == PlayerRole.Placer)
         {
             await BackendManager.Instance.RequestBackendMode(BackendMode.MultiplayerPlacer);
-            PhotonNetwork.LoadLevel("3_Game_Placer");
+            
+            // --- NUEVA LÓGICA DE SONDEO INTELIGENTE ---
+            Debug.Log("Intentando conectar con el backend del Colocador...");
+            bool isBackendReady = await PingServerUntilReady("ws://localhost:8767", placerConnectionTimeout);
+
+            if (isBackendReady)
+            {
+                Debug.Log("¡Backend del Colocador listo! Cargando escena...");
+                PhotonNetwork.LoadLevel("3_Game_Placer");
+            }
+            else
+            {
+                Debug.LogError($"El backend del Colocador no respondió en {placerConnectionTimeout} segundos. Abortando.");
+                // Aquí podrías mostrar un mensaje de error en la UI y volver al menú.
+                OnLeaveLobby(); 
+            }
         }
+    }
+
+    /// <summary>
+    /// Intenta conectar a una URL de WebSocket en un bucle hasta que tenga éxito o se agote el tiempo.
+    /// </summary>
+    /// <param name="url">La URL del servidor WebSocket a sondear.</param>
+    /// <param name="timeout">El tiempo máximo de espera en segundos.</param>
+    /// <returns>True si la conexión fue exitosa, false si se agotó el tiempo.</returns>
+    private async System.Threading.Tasks.Task<bool> PingServerUntilReady(string url, float timeout)
+    {
+        float startTime = Time.time;
+
+        while (Time.time - startTime < timeout)
+        {
+            // Usamos 'var' para que el tipo se infiera a NativeWebSocket.WebSocket
+            var testSocket = new WebSocket(url);
+            
+            var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>();
+
+            // Definimos los delegados con la firma correcta de NativeWebSocket
+            testSocket.OnOpen += () => 
+            {
+                tcs.TrySetResult(true);
+            };
+
+            testSocket.OnError += (string e) =>
+            {
+                // Imprimimos el error para depuración, pero no lo consideramos fatal aquí.
+                // Simplemente significa que el servidor no está listo todavía.
+                // Debug.Log($"Ping fallido (esperado): {e}");
+                tcs.TrySetResult(false);
+            };
+            
+            // Si el socket se cierra antes de abrirse, es un fallo.
+            testSocket.OnClose += (WebSocketCloseCode code) =>
+            {
+                tcs.TrySetResult(false);
+            };
+
+            testSocket.Connect();
+
+            // Esperamos el resultado de OnOpen u OnError/OnClose
+            bool success = await tcs.Task;
+            
+            if (success)
+            {
+                await testSocket.Close(); // Cerramos la conexión de prueba
+                return true; // ¡Éxito!
+            }
+
+            // Si falla, esperamos un poco antes de reintentar para no sobrecargar.
+            await System.Threading.Tasks.Task.Delay(250); 
+        }
+
+        return false; // Se agotó el tiempo.
     }
     
     public void OnLeaveLobby()
