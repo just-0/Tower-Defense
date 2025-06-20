@@ -87,6 +87,9 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
     private bool debugSpheresCreated = false; // Para crear las esferas de debug solo una vez
     private bool isCursorVisible = false;
 
+    private float timeSinceLastGridPosition = 0f;
+    private const float gridPositionTimeout = 0.3f;
+
     void Start()
     {
         Debug.Log("Iniciando SAMSystemController");
@@ -281,6 +284,8 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
     private void HandleGridPosition(byte[] messageData)
     {
         if (!isCursorVisible) SetCursorVisibility(true);
+
+        timeSinceLastGridPosition = 0f;
 
         string json = Encoding.UTF8.GetString(messageData);
         GridPosition gridPos = JsonUtility.FromJson<GridPosition>(json);
@@ -547,6 +552,15 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         
         UpdateRangeIndicator();
 
+        if (isCursorVisible)
+        {
+            timeSinceLastGridPosition += Time.deltaTime;
+            if (timeSinceLastGridPosition > gridPositionTimeout)
+            {
+                SetCursorVisibility(false);
+            }
+        }
+
         // ProcessQueuedMessages(); // Eliminado, MainWebSocketClient lo maneja
         
         // #if !UNITY_WEBGL || UNITY_EDITOR // Eliminado, MainWebSocketClient lo maneja
@@ -751,6 +765,11 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         if (gridCursor != null)
         {
             gridCursor.SetActive(visible);
+        }
+
+        if (!visible)
+        {
+            timeSinceLastGridPosition = 0f;
         }
     }
 } 
