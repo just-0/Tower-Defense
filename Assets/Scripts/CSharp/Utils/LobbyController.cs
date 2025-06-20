@@ -16,6 +16,8 @@ public class LobbyController : MonoBehaviourPunCallbacks
     [SerializeField] private Button selectorButton;
     [Tooltip("Botón para elegir el rol de Colocador.")]
     [SerializeField] private Button placerButton;
+    [Tooltip("Botón para unirse a una sala aleatoria.")]
+    [SerializeField] private Button joinRoomButton;
     [SerializeField] private Text statusText; // Un texto para mostrar el estado
 
     [Header("Game Start Settings")]
@@ -33,17 +35,33 @@ public class LobbyController : MonoBehaviourPunCallbacks
 
     void Start()
     {
-        selectorButton.interactable = true;
-        placerButton.interactable = true;
+        // Al empezar, todo deshabilitado hasta que nos conectemos al Master
+        joinRoomButton.interactable = false;
+        selectorButton.interactable = false;
+        placerButton.interactable = false;
         startGameButton.gameObject.SetActive(false); // Oculto por defecto
-        statusText.text = "Conectado. ¡Únete a una sala!";
+        statusText.text = "Conectando a Photon...";
+
+        // Si no estamos conectados, el PhotonManager debería conectarnos.
+        // Si ya lo estamos, se llamará a OnConnectedToMaster inmediatamente.
+        if (!PhotonNetwork.IsConnected)
+        {
+             PhotonManager.Instance.ConnectToPhoton();
+        }
     }
 
-    public static void JoinRandomRoom() // Método estático que llamaremos desde la UI
+    public override void OnConnectedToMaster()
+    {
+        statusText.text = "¡Conectado! Listo para unirse a una sala.";
+        joinRoomButton.interactable = true; // Ahora sí se puede unir
+    }
+
+    public void JoinRandomRoom()
     {
          if (PhotonNetwork.IsConnected)
          {
-             _instance.statusText.text = "Buscando sala...";
+             statusText.text = "Buscando sala...";
+             joinRoomButton.interactable = false; // Deshabilitar mientras busca
              PhotonNetwork.JoinRandomRoom();
          }
     }
@@ -56,7 +74,10 @@ public class LobbyController : MonoBehaviourPunCallbacks
 
     public override void OnJoinedRoom()
     {
-        statusText.text = $"¡Unido a la sala! Jugadores: {PhotonNetwork.CurrentRoom.PlayerCount}";
+        statusText.text = $"¡Unido a la sala! Elige un rol. Jugadores: {PhotonNetwork.CurrentRoom.PlayerCount}";
+        joinRoomButton.gameObject.SetActive(false); // Ocultamos el botón de unirse
+        selectorButton.interactable = true; // Activamos los botones de rol
+        placerButton.interactable = true;
         UpdateStartButtonVisibility();
     }
 
@@ -124,13 +145,27 @@ public class LobbyController : MonoBehaviourPunCallbacks
         if (this.localPlayerRole == PlayerRole.Selector)
         {
             await BackendManager.Instance.RequestBackendMode(BackendMode.MultiplayerSelector);
-            PhotonNetwork.LoadLevel("4_Game_Selector");
+            
+            statusText.text = "Iniciando servicios del selector... por favor espera.";
+            // El selector necesita el servidor de gestos en el puerto 8768
+            bool isBackendReady = await PingServerUntilReady("ws://localhost:8768", placerConnectionTimeout);
+
+            if (isBackendReady)
+            {
+                PhotonNetwork.LoadLevel("4_Game_Selector");
+            }
+            else
+            {
+                statusText.text = $"Error: El backend de gestos no respondió en {placerConnectionTimeout}s.";
+                // Aquí podrías añadir un botón para volver al menú
+            }
         }
         else if (this.localPlayerRole == PlayerRole.Placer)
         {
             await BackendManager.Instance.RequestBackendMode(BackendMode.MultiplayerPlacer);
             
             statusText.text = "Backend del colocador iniciando... por favor espera.";
+            // El colocador necesita el servidor SAM en el puerto 8767
             bool isBackendReady = await PingServerUntilReady("ws://localhost:8767", placerConnectionTimeout);
 
             if (isBackendReady)

@@ -598,6 +598,7 @@ MonoBehaviour:
   startGameButton: {fileID: 560529603}
   selectorButton: {fileID: 267325976}
   placerButton: {fileID: 2078652215}
+  joinRoomButton: {fileID: 716557112}
   statusText: {fileID: 1829584011}
   placerConnectionTimeout: 15
 --- !u!114 &575421490
