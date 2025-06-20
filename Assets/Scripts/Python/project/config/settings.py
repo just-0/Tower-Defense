@@ -8,7 +8,7 @@ WEBSOCKET_PORT = 8767
 FINGER_TRACKING_PORT = 8768  # New port for finger tracking WebSocket
 
 # Camera settings for SAM
-CAMERA_INDEX = 1  # Index of the camera to use for SAM
+CAMERA_INDEX = 0  # Index of the camera to use for SAM
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 CAMERA_FPS = 30
