@@ -18,6 +18,9 @@ from config.settings import (
     MESSAGE_TYPE_SWITCH_CAMERA, MESSAGE_TYPE_CAMERA_LIST
 )
 
+# Define a new message type for sending camera resolution info
+MESSAGE_TYPE_CAMERA_INFO = 12
+
 class GestureServer:
     """
     WebSocket server for handling finger tracking for one client.
@@ -62,6 +65,16 @@ class GestureServer:
         await websocket.send(status_message)
 
         if self.camera_ready:
+            # Send camera info to the client
+            try:
+                # Assuming FingerCounter exposes the actual width and height
+                width, height = self.finger_counter.width, self.finger_counter.height
+                info_payload = {"width": width, "height": height}
+                await websocket.send(bytes([MESSAGE_TYPE_CAMERA_INFO]) + json.dumps(info_payload).encode('utf-8'))
+                print(f"Sent gesture camera info: {width}x{height}")
+            except Exception as e:
+                print(f"Could not get/send gesture camera resolution: {e}")
+
             available_cams = scan_for_available_cameras()
             cam_list_payload = {"available_cameras": available_cams}
             cam_list_message = bytes([MESSAGE_TYPE_CAMERA_LIST]) + json.dumps(cam_list_payload).encode('utf-8')

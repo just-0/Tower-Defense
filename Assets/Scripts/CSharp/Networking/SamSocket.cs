@@ -36,6 +36,13 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         public float progress;
     }
 
+    [Serializable]
+    public struct CameraInfo
+    {
+        public int width;
+        public int height;
+    }
+
     [Header("Cursor y Rango")]
     [Tooltip("La escala del objeto visual que sigue al dedo del jugador.")]
     [SerializeField] private float cursorScale = 0.6f;
@@ -87,6 +94,9 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
     private bool debugSpheresCreated = false; // Para crear las esferas de debug solo una vez
     private bool isCursorVisible = false;
 
+    private float serverCameraWidth = 640f;
+    private float serverCameraHeight = 480f;
+
     private float timeSinceLastGridPosition = 0f;
     private const float gridPositionTimeout = 0.3f;
 
@@ -133,6 +143,7 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             mainWebSocketClient.OnGridPositionReceived += HandleGridPosition;
             mainWebSocketClient.OnGridPositionConfirmed += HandleGridConfirmation;
             mainWebSocketClient.OnProgressUpdateReceived += HandleProgressUpdate;
+            mainWebSocketClient.OnCameraInfoReceived += HandleCameraInfoMessage;
             // Podríamos también suscribirnos a OnError y OnClose si necesitamos lógica específica aquí
         }
         else
@@ -256,6 +267,26 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         }
     }
 
+    private void HandleCameraInfoMessage(byte[] messageData)
+    {
+        try
+        {
+            string json = Encoding.UTF8.GetString(messageData);
+            CameraInfo info = JsonUtility.FromJson<CameraInfo>(json);
+            
+            if (info.width > 0 && info.height > 0)
+            {
+                serverCameraWidth = info.width;
+                serverCameraHeight = info.height;
+                Debug.Log($"[SAMSystemController] Recibida y actualizada la resolución de la cámara del servidor: {serverCameraWidth}x{serverCameraHeight}");
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"Error procesando el mensaje de información de la cámara: {e.Message}");
+        }
+    }
+
     private void HandleProgressUpdate(byte[] messageData)
     {
         if (LoadingManager.Instance == null) return;
@@ -314,8 +345,8 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
 
         float orthoHeight = Camera.main.orthographicSize;
         float orthoWidth = orthoHeight * Camera.main.aspect;
-        float originalWidth = 640f;  // Ancho de la cámara de Python
-        float originalHeight = 480f; // Alto de la cámara de Python
+        float originalWidth = serverCameraWidth;
+        float originalHeight = serverCameraHeight;
         float scaleX = (orthoWidth * 2f) / originalWidth;
         float scaleY = (orthoHeight * 2f) / originalHeight;
 
@@ -357,8 +388,8 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         }
         float orthoHeight = Camera.main.orthographicSize;
         float orthoWidth = orthoHeight * Camera.main.aspect;
-        float originalWidth = 640f;
-        float originalHeight = 480f;
+        float originalWidth = serverCameraWidth;
+        float originalHeight = serverCameraHeight;
         float scaleX = (orthoWidth * 2f) / originalWidth;
         float scaleY = (orthoHeight * 2f) / originalHeight;
         float zPos = -5f;
@@ -389,8 +420,8 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         }
         float orthoHeight = Camera.main.orthographicSize;
         float orthoWidth = orthoHeight * Camera.main.aspect;
-        float originalWidth = 640f;
-        float originalHeight = 480f;
+        float originalWidth = serverCameraWidth;
+        float originalHeight = serverCameraHeight;
         float scaleX = (orthoWidth * 2f) / originalWidth;
         float scaleY = (orthoHeight * 2f) / originalHeight;
         float zPos = -3f;
@@ -470,8 +501,8 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         // Por ahora, el cuerpo del método está vacío como en el original, pero necesita implementación.
         float orthoHeight = Camera.main.orthographicSize;
         float orthoWidth = orthoHeight * Camera.main.aspect;
-        float originalWidth = 640f; 
-        float originalHeight = 480f;
+        float originalWidth = serverCameraWidth; 
+        float originalHeight = serverCameraHeight;
         float scaleX = (orthoWidth * 2f) / originalWidth;
         float scaleY = (orthoHeight * 2f) / originalHeight;
         float zPos = -5f; 
@@ -493,8 +524,8 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
 
         float orthoHeight = Camera.main.orthographicSize;
         float orthoWidth = orthoHeight * Camera.main.aspect;
-        float originalWidth = 640f;
-        float originalHeight = 480f;
+        float originalWidth = serverCameraWidth;
+        float originalHeight = serverCameraHeight;
         float scaleX = (orthoWidth * 2f) / originalWidth;
         float scaleY = (orthoHeight * 2f) / originalHeight;
 
@@ -700,6 +731,7 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             mainWebSocketClient.OnGridPositionReceived -= HandleGridPosition;
             mainWebSocketClient.OnGridPositionConfirmed -= HandleGridConfirmation;
             mainWebSocketClient.OnProgressUpdateReceived -= HandleProgressUpdate;
+            mainWebSocketClient.OnCameraInfoReceived -= HandleCameraInfoMessage;
         }
     }
 

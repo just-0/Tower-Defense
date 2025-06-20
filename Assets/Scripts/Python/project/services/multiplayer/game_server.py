@@ -22,7 +22,8 @@ from config.settings import (
     WEBSOCKET_HOST, WEBSOCKET_PORT,
     MESSAGE_TYPE_CAMERA_FRAME, MESSAGE_TYPE_MASK, MESSAGE_TYPE_PATH,
     MESSAGE_TYPE_GRID_POSITION, CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT,
-    CAMERA_FPS, MESSAGE_TYPE_GRID_CONFIRMATION, TRANSMISSION_FPS, MESSAGE_TYPE_PROGRESS_UPDATE
+    CAMERA_FPS, MESSAGE_TYPE_GRID_CONFIRMATION, TRANSMISSION_FPS, MESSAGE_TYPE_PROGRESS_UPDATE,
+    MESSAGE_TYPE_CAMERA_INFO
 )
 
 class GameServer:
@@ -38,8 +39,10 @@ class GameServer:
         self.planning_camera_manager = CameraManager(camera_index=CAMERA_INDEX, width=CAMERA_WIDTH, height=CAMERA_HEIGHT, fps=CAMERA_FPS)
         self.sam_processor = SAMProcessor()
         self.aruco_detector = ArucoDetector()
-        self.grid_system = GridSystem(CAMERA_WIDTH, CAMERA_HEIGHT)
-        self.finger_detector = FingerPositionDetector(self.grid_system)
+        # GridSystem and FingerDetector will be initialized on-demand when combat starts,
+        # using the actual camera resolution.
+        self.grid_system = None
+        self.finger_detector = None
         
         self.active_connections = set()
 
@@ -67,6 +70,19 @@ class GameServer:
                     if message == "START_CAMERA" and not combat_mode_active:
                         if not self.planning_camera_manager.is_running:
                             self.planning_camera_manager.start_camera()
+
+                        # Send camera dimensions to client, assuming CameraManager has a method to get the actual resolution.
+                        if self.planning_camera_manager.is_running:
+                            try:
+                                # This assumes CameraManager has a way to expose the actual resolution.
+                                # A method like get_resolution() or properties .width and .height are common.
+                                width, height = self.planning_camera_manager.width, self.planning_camera_manager.height
+                                info_payload = {"width": width, "height": height}
+                                await websocket.send(bytes([MESSAGE_TYPE_CAMERA_INFO]) + json.dumps(info_payload).encode('utf-8'))
+                                print(f"Sent planning camera info: {width}x{height}")
+                            except Exception as e:
+                                print(f"Could not get/send planning camera resolution: {e}")
+
                         if send_frames_task is None or send_frames_task.done():
                             send_frames_task = asyncio.create_task(
                                 self.send_planning_frames(websocket)
@@ -222,35 +238,54 @@ class GameServer:
         stop_event = threading.Event()
         frame_queue = queue.Queue(maxsize=2)
 
-        def capture_frames_thread():
-            nonlocal cap
+        # The capture function is now simpler, it just reads from the camera object it receives.
+        def capture_frames_thread(cap_instance, stop_event_instance, queue_instance):
             try:
-                cap = cv2.VideoCapture(CAMERA_INDEX)
-                if not cap.isOpened():
-                    print(f"ERROR: Could not open camera {CAMERA_INDEX} for combat mode.")
-                    return
-
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-                cap.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
-                print(f"Combat camera {CAMERA_INDEX} opened.")
-
-                while not stop_event.is_set():
-                    ret, frame = cap.read()
+                while not stop_event_instance.is_set():
+                    if not cap_instance or not cap_instance.isOpened():
+                        time.sleep(0.1)
+                        continue
+                    ret, frame = cap_instance.read()
                     if not ret:
                         time.sleep(0.01)
                         continue
-                    if frame_queue.full():
-                        try: frame_queue.get_nowait()
+                    if queue_instance.full():
+                        try: queue_instance.get_nowait()
                         except queue.Empty: pass
-                    frame_queue.put(frame)
+                    queue_instance.put(frame)
             finally:
-                if cap and cap.isOpened():
-                    cap.release()
-                print("Combat camera thread finished.")
+                if cap_instance and cap_instance.isOpened():
+                    cap_instance.release()
+                print("Combat camera thread finished and released camera.")
 
         try:
-            capture_thread = threading.Thread(target=capture_frames_thread, daemon=True)
+            # --- Camera initialization is now done in the main async function ---
+            cap = cv2.VideoCapture(CAMERA_INDEX)
+            if not cap.isOpened():
+                print(f"ERROR: Could not open camera {CAMERA_INDEX} for combat mode.")
+                return
+
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
+            cap.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
+            
+            # Get the ACTUAL resolution from the camera driver
+            actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            print(f"Combat camera {CAMERA_INDEX} opened with actual resolution: {actual_width}x{actual_height}.")
+            
+            # Send this information to the Unity client
+            info_payload = {"width": actual_width, "height": actual_height}
+            await websocket.send(bytes([MESSAGE_TYPE_CAMERA_INFO]) + json.dumps(info_payload).encode('utf-8'))
+
+            # Initialize or update GridSystem and FingerDetector with the correct, real resolution
+            if self.grid_system is None or self.grid_system.width != actual_width or self.grid_system.height != actual_height:
+                print(f"Initializing GridSystem with new resolution: {actual_width}x{actual_height}")
+                self.grid_system = GridSystem(actual_width, actual_height)
+                self.finger_detector = FingerPositionDetector(self.grid_system)
+
+            # --- Start the capture thread, passing it the initialized camera object ---
+            capture_thread = threading.Thread(target=capture_frames_thread, args=(cap, stop_event, frame_queue), daemon=True)
             capture_thread.start()
             
             is_active = True
@@ -258,19 +293,22 @@ class GameServer:
                 try:
                     frame_bgr = frame_queue.get(timeout=1.0)
                 except queue.Empty:
+                    print("Combat frame queue empty. Waiting...")
                     continue
 
                 frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                 
-                # Process the frame to get finger position AND the processed image
+                # Ensure finger detector is ready
+                if self.finger_detector is None:
+                    await asyncio.sleep(0.01)
+                    continue
+
                 output_image, _, is_confirmed, selected_cell = self.finger_detector.process_frame(frame_rgb)
                 
-                # Send the PROCESSED image with drawings to Unity
                 success, encoded_frame = encode_frame_to_jpeg(output_image, quality=85)
                 if success:
                     await websocket.send(bytes([MESSAGE_TYPE_CAMERA_FRAME]) + encoded_frame)
 
-                # Send grid position if a finger is pointing at a cell
                 if self.finger_detector.is_pointing and self.finger_detector.current_cell is not None:
                     row, col = self.finger_detector.current_cell
                     center = self.finger_detector.grid_system.get_cell_center(row, col)
@@ -279,17 +317,15 @@ class GameServer:
                         position_data = {"x": float(center[0]), "y": float(center[1]), "valid": is_valid}
                         await websocket.send(bytes([MESSAGE_TYPE_GRID_POSITION]) + json.dumps(position_data).encode('utf-8'))
 
-                # Send confirmation if a cell was selected
                 if is_confirmed and selected_cell is not None:
                     row, col = selected_cell
                     center = self.finger_detector.grid_system.get_cell_center(row, col)
                     if center:
-                        # A confirmed cell is always considered valid for placement intent
                         confirmed_data = {"x": float(center[0]), "y": float(center[1]), "valid": True}
                         await websocket.send(bytes([MESSAGE_TYPE_GRID_CONFIRMATION]) + json.dumps(confirmed_data).encode('utf-8'))
                         print(f"Sent confirmation for cell {selected_cell}")
 
-                await asyncio.sleep(1 / (CAMERA_FPS * 1.2))
+                await asyncio.sleep(1 / (CAMERA_FPS * 1.5)) # Adjusted sleep
 
         except asyncio.CancelledError:
             is_active = False
@@ -301,6 +337,7 @@ class GameServer:
             stop_event.set()
             if capture_thread:
                 capture_thread.join(timeout=1.0)
+            # The thread now handles releasing the camera, so we don't do it here.
             print("Exiting combat mode and cleaning up resources.")
     
     def cleanup(self):
