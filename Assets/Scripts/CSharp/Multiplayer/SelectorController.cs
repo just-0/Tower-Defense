@@ -49,9 +49,7 @@ public class SelectorController : MonoBehaviour
         if (PhotonManager.Instance != null)
         {
             PhotonManager.Instance.OnJoinedRoomEvent += OnJoinedPhotonRoom;
-            // Nos suscribimos a los nuevos eventos de progreso
-            PhotonManager.Instance.OnProgressUpdateReceived += HandleProgressUpdate;
-            PhotonManager.Instance.OnSamProcessingComplete += HandleSamComplete;
+            // Ya no nos suscribimos a los eventos de progreso aquí. LoadingManager se encargará.
         }
         else
         {
@@ -224,48 +222,20 @@ public class SelectorController : MonoBehaviour
 
     // --- MANEJADORES PARA EVENTOS DE PHOTON ---
 
-    private void HandleProgressUpdate(string step, float progress)
+    // ELIMINADOS: HandleProgressUpdate y HandleSamComplete
+    // La lógica se ha centralizado en LoadingManager para evitar duplicados.
+
+    private async void OnDestroy()
     {
-        // El Selector (que no es MasterClient) recibe el progreso y actualiza su UI
-        if (!PhotonNetwork.IsMasterClient)
+        if (websocket != null && websocket.State == WebSocketState.Open)
         {
-            if (LoadingManager.Instance != null)
-            {
-                // Asegurarse de que la pantalla de carga se muestre si aún no lo está
-                if (LoadingManager.Instance.IsVisible() == false)
-                {
-                     LoadingManager.Instance.Show("Sincronizando con el anfitrión...", true);
-                }
-                LoadingManager.Instance.UpdateProgress(step, progress);
-            }
+            await websocket.Close();
         }
-    }
-
-    private void HandleSamComplete()
-    {
-        // El Selector (que no es MasterClient) recibe la señal y oculta su pantalla
-        if (!PhotonNetwork.IsMasterClient)
-        {
-            if (LoadingManager.Instance != null)
-            {
-                LoadingManager.Instance.Hide();
-            }
-        }
-    }
-
-    private async void OnApplicationQuit()
-    {
-        if (websocket != null && websocket.State == WebSocketState.Open) await websocket.Close();
-    }
-
-    private void OnDestroy()
-    {
-        // Es crucial desuscribirse de los eventos para evitar errores
+        
+        // Desuscribirse de los eventos
         if (PhotonManager.Instance != null)
         {
             PhotonManager.Instance.OnJoinedRoomEvent -= OnJoinedPhotonRoom;
-            PhotonManager.Instance.OnProgressUpdateReceived -= HandleProgressUpdate;
-            PhotonManager.Instance.OnSamProcessingComplete -= HandleSamComplete;
         }
     }
 
