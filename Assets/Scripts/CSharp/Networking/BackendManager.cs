@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 
 public enum BackendMode
 {
+    Menu,
     SinglePlayer,
     MultiplayerSelector,
     MultiplayerPlacer,
@@ -81,6 +82,9 @@ public class BackendManager : MonoBehaviour
         string command = "";
         switch (mode)
         {
+            case BackendMode.Menu:
+                command = "start_menu";
+                break;
             case BackendMode.SinglePlayer:
                 command = "start_singleplayer";
                 break;

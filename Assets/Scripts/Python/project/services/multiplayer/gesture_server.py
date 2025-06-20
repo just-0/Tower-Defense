@@ -7,14 +7,15 @@ import websockets
 import json
 import cv2
 
-from utils.finger_tracking import FingerCounter
+from utils.finger_tracking import FingerCounter, scan_for_available_cameras
 from utils.image_processings import encode_frame_to_jpeg
 
 from config.settings import (
     WEBSOCKET_HOST, FINGER_TRACKING_PORT, TRANSMISSION_FPS,
     MESSAGE_TYPE_CAMERA_FRAME, MESSAGE_TYPE_FINGER_COUNT, FINGER_CAMERA_INDEX,
     FINGER_CAMERA_WIDTH, FINGER_CAMERA_HEIGHT, FINGER_CAMERA_FPS,
-    FINGER_TRANSMISSION_FPS
+    FINGER_TRANSMISSION_FPS, MENU_GESTURE_PORT, MESSAGE_TYPE_SERVER_STATUS,
+    MESSAGE_TYPE_SWITCH_CAMERA, MESSAGE_TYPE_CAMERA_LIST
 )
 
 class GestureServer:
@@ -22,11 +23,13 @@ class GestureServer:
     WebSocket server for handling finger tracking for one client.
     """
     
-    def __init__(self):
+    def __init__(self, port=FINGER_TRACKING_PORT):
         """Initialize the Gesture server."""
+        self.port = port
         self.server = None
+        self.camera_ready = False
         self.finger_counter = FingerCounter(
-            camera_index=FINGER_CAMERA_INDEX,
+            camera_index=None,
             width=FINGER_CAMERA_WIDTH,
             height=FINGER_CAMERA_HEIGHT,
             fps=FINGER_CAMERA_FPS
@@ -37,11 +40,14 @@ class GestureServer:
         self.server = await websockets.serve(
             self.handle_finger_client,
             WEBSOCKET_HOST,
-            FINGER_TRACKING_PORT
+            self.port
         )
-        print(f"Gesture WebSocket server started at ws://{WEBSOCKET_HOST}:{FINGER_TRACKING_PORT}")
+        print(f"Gesture WebSocket server started at ws://{WEBSOCKET_HOST}:{self.port}")
         
-        self.finger_counter.start_camera()
+        self.camera_ready = self.finger_counter.start_camera()
+        
+        if not self.camera_ready:
+            print(f"ADVERTENCIA: El servidor en el puerto {self.port} se inició, pero la cámara no está disponible.")
         
         await self.server.wait_closed()
         
@@ -50,6 +56,24 @@ class GestureServer:
         Handle a client connection for finger tracking.
         """
         print("New finger tracking client connected")
+
+        status_payload = {"status": "camera_ok" if self.camera_ready else "no_camera"}
+        status_message = bytes([MESSAGE_TYPE_SERVER_STATUS]) + json.dumps(status_payload).encode('utf-8')
+        await websocket.send(status_message)
+
+        if self.camera_ready:
+            available_cams = scan_for_available_cameras()
+            cam_list_payload = {"available_cameras": available_cams}
+            cam_list_message = bytes([MESSAGE_TYPE_CAMERA_LIST]) + json.dumps(cam_list_payload).encode('utf-8')
+            await websocket.send(cam_list_message)
+
+        if not self.camera_ready:
+            try:
+                await websocket.wait_closed()
+            finally:
+                print("Client disconnected from non-ready server.")
+            return
+
         finger_frame_task = None
         finger_count_task = None
         
@@ -57,6 +81,22 @@ class GestureServer:
             finger_frame_task = asyncio.create_task(self.send_finger_frames(websocket))
             finger_count_task = asyncio.create_task(self.send_finger_counts(websocket))
             
+            # Bucle para recibir mensajes del cliente
+            async for message in websocket:
+                if len(message) > 0:
+                    message_type = message[0]
+                    
+                    if message_type == MESSAGE_TYPE_SWITCH_CAMERA:
+                        try:
+                            json_str = message[1:].decode('utf-8')
+                            data = json.loads(json_str)
+                            new_index = data.get('index')
+                            if new_index is not None:
+                                print(f"Servidor recibió petición para cambiar a cámara {new_index}")
+                                self.finger_counter.switch_camera(new_index)
+                        except Exception as e:
+                            print(f"Error procesando mensaje de cambio de cámara: {e}")
+
             await asyncio.gather(finger_frame_task, finger_count_task)
             
         except websockets.exceptions.ConnectionClosed:
@@ -98,9 +138,9 @@ class GestureServer:
             self.finger_counter.stop_camera()
         print("Gesture server cleaned up.")
 
-def create_server():
+def create_server(port=FINGER_TRACKING_PORT):
     """Create and return the GestureServer instance."""
-    return GestureServer()
+    return GestureServer(port)
 
 async def start_server(server):
     """Start the server's async tasks."""

@@ -22,7 +22,7 @@ from config.settings import (
     WEBSOCKET_HOST, WEBSOCKET_PORT,
     MESSAGE_TYPE_CAMERA_FRAME, MESSAGE_TYPE_MASK, MESSAGE_TYPE_PATH,
     MESSAGE_TYPE_GRID_POSITION, CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT,
-    CAMERA_FPS, MESSAGE_TYPE_GRID_CONFIRMATION, TRANSMISSION_FPS
+    CAMERA_FPS, MESSAGE_TYPE_GRID_CONFIRMATION, TRANSMISSION_FPS, MESSAGE_TYPE_PROGRESS_UPDATE
 )
 
 class GameServer:
@@ -127,27 +127,42 @@ class GameServer:
         except Exception as e:
             print(f"Error in send_planning_frames: {e}")
 
+    async def send_progress_update(self, websocket, step, progress):
+        """Envía una actualización de progreso al cliente."""
+        try:
+            progress_data = {"step": step, "progress": progress}
+            progress_json = json.dumps(progress_data)
+            await websocket.send(bytes([MESSAGE_TYPE_PROGRESS_UPDATE]) + progress_json.encode('utf-8'))
+            await asyncio.sleep(0.01) # Ceder control para que el mensaje se envíe
+        except Exception as e:
+            print(f"Error enviando actualización de progreso: {e}")
+
     async def process_sam(self, websocket):
         """Process the current frame with SAM and send the result, with error handling."""
         print("Starting SAM process...")
         try:
+            # Informar al cliente que el proceso ha comenzado
+            await self.send_progress_update(websocket, "Iniciando proceso...", 5)
+            
             if not self.planning_camera_manager.is_running:
                 self.planning_camera_manager.start_camera()
                 await asyncio.sleep(1.5)
 
             frame = self.planning_camera_manager.get_current_frame()
             if frame is None:
+                await self.send_progress_update(websocket, "Error: no se pudo capturar fotograma.", 0)
                 print("Error: Could not get frame for SAM processing.")
                 return
 
-            print("Frame acquired, detecting ArUco marker...")
+            await self.send_progress_update(websocket, "Detectando marcador ArUco...", 15)
             if frame.shape[2] == 3:
                 frame_bgr_for_aruco = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             else:
                 frame_bgr_for_aruco = frame
 
             ids, centers, aruco_corners, _ = self.aruco_detector.detect(frame_bgr_for_aruco, draw=False)
-            
+            await self.send_progress_update(websocket, "Detección de ArUco finalizada.", 30)
+
             goal = None
             if centers and len(centers) > 0:
                 cx, cy = centers[0]
@@ -157,12 +172,22 @@ class GameServer:
                 print("Warning: ArUco marker not found.")
             
             print("Processing frame with SAM...")
-            mask_bytes = self.sam_processor.process_image(frame, scene_type="pared", aruco_corners=aruco_corners)
+            await self.send_progress_update(websocket, "Iniciando SAM...", 40)
+            
+            mask_bytes = await self.sam_processor.process_image(
+                frame, 
+                scene_type="pared", 
+                aruco_corners=aruco_corners,
+                progress_callback=self.send_progress_update,
+                websocket=websocket
+            )
             
             if not mask_bytes:
+                await self.send_progress_update(websocket, "Error en procesamiento SAM", 0)
                 print("Error: SAM processing did not return a mask.")
                 return
-
+            
+            await self.send_progress_update(websocket, "Máscara recibida. Calculando ruta...", 80)
             await websocket.send(bytes([MESSAGE_TYPE_MASK]) + mask_bytes)
             print("Mask sent. Calculating A* path...")
 
@@ -170,9 +195,11 @@ class GameServer:
             if path:
                 path_data = [{"x": x, "y": y} for x, y in path]
                 path_json = json.dumps(path_data)
+                await self.send_progress_update(websocket, "Ruta calculada. Enviando...", 95)
                 await websocket.send(bytes([MESSAGE_TYPE_PATH]) + path_json.encode('utf-8'))
                 print("Path sent successfully.")
             else:
+                await self.send_progress_update(websocket, "Error: no se pudo calcular la ruta A*.", 0)
                 print("Warning: A* path could not be calculated.")
 
         except Exception as e:

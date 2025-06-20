@@ -3,9 +3,11 @@ import websockets
 import signal
 import sys
 from services.multiplayer import game_server, gesture_server
+from config.settings import WEBSOCKET_HOST, MENU_GESTURE_PORT
 
-CONTROL_PORT = 8765  # Puerto para la comunicación de control con Unity
+CONTROL_PORT = 8765
 current_server_tasks = []
+menu_server_instance = None # Guardamos la instancia del servidor de menú
 
 async def stop_current_servers():
     """Detiene y limpia las tareas de servidor activas."""
@@ -13,25 +15,41 @@ async def stop_current_servers():
     if not current_server_tasks:
         return
 
-    print(f"Deteniendo {len(current_server_tasks)} servidor(es) activo(s)...")
+    print(f"Deteniendo {len(current_server_tasks)} servidor(es) de juego activo(s)...")
     for task in current_server_tasks:
         task.cancel()
     
     await asyncio.gather(*current_server_tasks, return_exceptions=True)
     current_server_tasks = []
-    print("Servidores anteriores detenidos.")
+    print("Servidores de juego anteriores detenidos.")
+
+async def start_menu_server():
+    """Inicia el servidor de gestos para el menú principal."""
+    global current_server_tasks, menu_server_instance
+    await stop_current_servers()
+
+    # Usamos gesture_server pero en el puerto del MENÚ
+    menu_server_instance = gesture_server.create_server(port=MENU_GESTURE_PORT)
+    
+    print(f"Iniciando servidor de gestos del menú en el puerto {MENU_GESTURE_PORT}...")
+    task_menu = asyncio.create_task(gesture_server.start_server(menu_server_instance))
+    current_server_tasks.append(task_menu)
 
 async def handle_unity_commands(websocket):
     """Maneja los comandos entrantes de Unity para controlar los servidores."""
-    global current_server_tasks
+    global current_server_tasks, menu_server_instance
     print(f"Cliente de Unity conectado desde {websocket.remote_address}")
     
     try:
         async for message in websocket:
             print(f"Comando recibido de Unity: '{message}'")
+            # Detenemos CUALQUIER servidor que esté corriendo antes de empezar uno nuevo
             await stop_current_servers()
 
-            if message == "start_singleplayer":
+            if message == "start_menu":
+                await start_menu_server()
+
+            elif message == "start_singleplayer":
                 print("Iniciando backend en modo Single-Player...")
                 placer_instance = game_server.create_server()
                 selector_instance = gesture_server.create_server()
@@ -64,18 +82,21 @@ async def handle_unity_commands(websocket):
         await stop_current_servers()
 
 async def main():
-    """Función principal para iniciar el servidor de control."""
+    """Función principal para iniciar el servidor de control y el de menú."""
     loop = asyncio.get_running_loop()
     stop = loop.create_future()
     loop.add_signal_handler(signal.SIGINT, stop.set_result, None)
     loop.add_signal_handler(signal.SIGTERM, stop.set_result, None)
 
+    # Iniciar el servidor de menú por defecto
+    await start_menu_server()
+
     async with websockets.serve(handle_unity_commands, "localhost", CONTROL_PORT):
         print(f"Servidor de control iniciado en ws://localhost:{CONTROL_PORT}")
-        print("Esperando conexión de Unity... (Presiona Ctrl+C para salir)")
+        print("Backend listo y esperando órdenes... (Presiona Ctrl+C para salir)")
         await stop
 
-    print("Cerrando el servidor de control.")
+    print("Cerrando todos los servidores.")
 
 
 if __name__ == "__main__":

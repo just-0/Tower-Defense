@@ -19,6 +19,7 @@ public class MainWebSocketClient : MonoBehaviour
     public event Action<byte[]> OnPathPointsReceived;       // Tipo 4 (puntos del path A*)
     public event Action<byte[]> OnGridPositionReceived;     // Tipo 6 (posición en la cuadrícula)
     public event Action<byte[]> OnGridPositionConfirmed;    // Tipo 7 (posición confirmada para colocar torreta)
+    public event Action<byte[]> OnProgressUpdateReceived;   // Tipo 11 (actualización de progreso)
     public event Action<byte, byte[]> OnUnknownMessageReceived; // Para tipos de mensaje no manejados explícitamente
 
     private readonly Queue<byte[]> messageQueue = new Queue<byte[]>();
@@ -156,6 +157,9 @@ public class MainWebSocketClient : MonoBehaviour
                 break;
             case 7: // Grid Position Confirmed
                 OnGridPositionConfirmed?.Invoke(messageData);
+                break;
+            case 11: // Progress Update
+                OnProgressUpdateReceived?.Invoke(messageData);
                 break;
             default:
                 Debug.LogWarning($"MainWebSocketClient: Tipo de mensaje desconocido recibido: {messageType}");

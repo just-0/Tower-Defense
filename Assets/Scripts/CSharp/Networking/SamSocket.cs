@@ -6,6 +6,8 @@ using System.Threading.Tasks;
 using System.Collections.Generic;
 using System;
 using UnityEngine.SceneManagement;
+using Photon.Realtime;
+using Photon.Chat;
 
 // Cambiamos el nombre de la clase de SAMController a SAMSystemController
 public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
@@ -27,6 +29,13 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         public bool valid;
     }
 
+    [Serializable]
+    public struct ProgressUpdate
+    {
+        public string step;
+        public float progress;
+    }
+
     [Header("Componentes UI y Visuales")]
     [SerializeField] private RawImage cameraDisplay;
     [SerializeField] private RawImage maskDisplay;
@@ -39,6 +48,7 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
     [SerializeField] private MonsterManager monsterManager; // Referencia al MonsterManager para las oleadas de monstruos
     [SerializeField] private MainWebSocketClient mainWebSocketClient; // Referencia al nuevo cliente WebSocket
     [SerializeField] private TurretManager turretManager;
+    private PhotonManager photonManager; // Referencia al gestor de Photon
     
     private Texture2D cameraTexture;
     private Texture2D maskTexture;
@@ -73,6 +83,9 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
     {
         Debug.Log("Iniciando SAMSystemController");
         
+        // Obtener la instancia de PhotonManager
+        photonManager = PhotonManager.Instance;
+        
         // Verificar componentes críticos
         if (gridCursor == null) Debug.LogError("¡gridCursor no está asignado en el Inspector!");
         if (validPositionMaterial == null) Debug.LogError("¡validPositionMaterial no está asignado en el Inspector!");
@@ -103,6 +116,7 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             mainWebSocketClient.OnPathPointsReceived += HandlePathPointsMessage;
             mainWebSocketClient.OnGridPositionReceived += HandleGridPosition;
             mainWebSocketClient.OnGridPositionConfirmed += HandleGridConfirmation;
+            mainWebSocketClient.OnProgressUpdateReceived += HandleProgressUpdate;
             // Podríamos también suscribirnos a OnError y OnClose si necesitamos lógica específica aquí
         }
         else
@@ -175,6 +189,12 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             {
                 gestureReceiver.OnServerResponseReceived();
             }
+
+            // Actualizamos el progreso pero no ocultamos la pantalla todavía
+            if (LoadingManager.Instance != null)
+            {
+                LoadingManager.Instance.UpdateProgress("Máscara de segmentación recibida", 85f);
+            }
         } catch (Exception e) {
             Debug.LogError($"Error al cargar máscara: {e.Message}");
         }
@@ -196,10 +216,52 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             {
                 gestureReceiver.OnServerResponseReceived();
             }
+
+            // Ahora que la ruta (el último paso) ha llegado, ocultamos la pantalla de carga
+            if (LoadingManager.Instance != null)
+            {
+                LoadingManager.Instance.Hide();
+            }
+
+            // Notificar a otros jugadores que el procesamiento ha terminado.
+            if (photonManager != null && photonManager.IsMasterClient())
+            {
+                photonManager.BroadcastSamComplete();
+            }
         }
         catch (Exception e) 
         {
             Debug.LogError($"JSON parsing error en PathPoints: {e.Message}");
+            // Si hay un error, también ocultamos la pantalla para no bloquear al jugador
+            if (LoadingManager.Instance != null)
+            {
+                LoadingManager.Instance.Hide();
+            }
+        }
+    }
+
+    private void HandleProgressUpdate(byte[] messageData)
+    {
+        if (LoadingManager.Instance == null) return;
+
+        try
+        {
+            string json = Encoding.UTF8.GetString(messageData);
+            ProgressUpdate update = JsonUtility.FromJson<ProgressUpdate>(json);
+            
+            // Actualizar la UI de carga localmente
+            LoadingManager.Instance.UpdateProgress(update.step, update.progress);
+
+            // Si estamos en modo multijugador (comprobando si photonManager no es nulo y estamos en una sala),
+            // y somos el MasterClient (el "Colocador"), retransmitimos el progreso.
+            if (photonManager != null && photonManager.IsMasterClient())
+            {
+                photonManager.BroadcastProgressUpdate(update.step, update.progress);
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"Error procesando el mensaje de progreso: {e}");
         }
     }
 
@@ -515,7 +577,6 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         // Comprobar mainWebSocketClient.IsConnected en lugar de isConnected
         if (Input.GetKeyDown(KeyCode.Space) && mainWebSocketClient != null && mainWebSocketClient.IsConnected && !processingFrame)
         {
-            processingFrame = true;
             SendMessage("PROCESS_SAM");
         }
 
@@ -540,7 +601,20 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
 
         // La lógica de combatModeJustStarted, inCombatMode, etc., se mantiene aquí
         // ya que es específica del sistema SAM y no del cliente WebSocket genérico.
-        if (message == "START_COMBAT")
+        if (message == "PROCESS_SAM")
+        {
+            if (processingFrame)
+            {
+                Debug.LogWarning("SAMSystemController: Se ha ignorado la solicitud 'PROCESS_SAM' porque ya hay una en curso.");
+                return;
+            }
+            processingFrame = true;
+            if (LoadingManager.Instance != null)
+            {
+                LoadingManager.Instance.Show("Procesando el escenario...", true);
+            }
+        }
+        else if (message == "START_COMBAT")
         {
             combatModeJustStarted = true;
             inCombatMode = true;
@@ -596,6 +670,7 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             mainWebSocketClient.OnPathPointsReceived -= HandlePathPointsMessage;
             mainWebSocketClient.OnGridPositionReceived -= HandleGridPosition;
             mainWebSocketClient.OnGridPositionConfirmed -= HandleGridConfirmation;
+            mainWebSocketClient.OnProgressUpdateReceived -= HandleProgressUpdate;
         }
     }
 

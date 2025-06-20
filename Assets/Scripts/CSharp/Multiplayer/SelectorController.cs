@@ -4,6 +4,8 @@ using UnityEngine.UI;
 using NativeWebSocket;
 using System.Text;
 using System.Threading.Tasks;
+using Photon.Realtime;
+using Photon.Pun;
 
 public class SelectorController : MonoBehaviour
 {
@@ -42,11 +44,27 @@ public class SelectorController : MonoBehaviour
         if (gestureImage != null) gestureImage.texture = receivedTexture;
         
         UpdateStatus("Connecting to Photon...");
-        
-        PhotonManager.Instance.OnJoinedRoomEvent += () => UpdateStatus("Connected to Photon Room. Ready.");
+
+        // Esperar a que la instancia esté lista
+        if (PhotonManager.Instance != null)
+        {
+            PhotonManager.Instance.OnJoinedRoomEvent += OnJoinedPhotonRoom;
+            // Nos suscribimos a los nuevos eventos de progreso
+            PhotonManager.Instance.OnProgressUpdateReceived += HandleProgressUpdate;
+            PhotonManager.Instance.OnSamProcessingComplete += HandleSamComplete;
+        }
+        else
+        {
+            Debug.LogError("PhotonManager.Instance es nulo en Start. No se pueden suscribir los eventos.");
+        }
 
         await ConnectToGestureServer();
         UpdateUI();
+    }
+
+    private void OnJoinedPhotonRoom()
+    {
+        UpdateStatus("Connected to Photon Room. Ready.");
     }
 
     private async Task ConnectToGestureServer()
@@ -122,7 +140,15 @@ public class SelectorController : MonoBehaviour
 
                 if (currentPhase == GamePhase.Planning)
                 {
-                    if (currentFingerCount == 3) SendCommand("PROCESS_SAM");
+                    if (currentFingerCount == 3) 
+                    {
+                        // Mostramos la pantalla de carga para el Selector en cuanto envía la orden
+                        if (LoadingManager.Instance != null)
+                        {
+                            LoadingManager.Instance.Show("Procesando el mapa...", true);
+                        }
+                        SendCommand("PROCESS_SAM");
+                    }
                     else if (currentFingerCount == 5) SendCommand("START_COMBAT");
                 }
                 else if (currentPhase == GamePhase.Combat)
@@ -140,6 +166,7 @@ public class SelectorController : MonoBehaviour
 
     private void SendCommand(string command)
     {
+        // Ya no mostramos la pantalla de carga aquí, se hace en HandleGestureLogic
         PhotonManager.Instance.SendPhaseChange(command);
         UpdateStatus($"Sent Command: {command}");
 
@@ -195,9 +222,51 @@ public class SelectorController : MonoBehaviour
         }
     }
 
+    // --- MANEJADORES PARA EVENTOS DE PHOTON ---
+
+    private void HandleProgressUpdate(string step, float progress)
+    {
+        // El Selector (que no es MasterClient) recibe el progreso y actualiza su UI
+        if (!PhotonNetwork.IsMasterClient)
+        {
+            if (LoadingManager.Instance != null)
+            {
+                // Asegurarse de que la pantalla de carga se muestre si aún no lo está
+                if (LoadingManager.Instance.IsVisible() == false)
+                {
+                     LoadingManager.Instance.Show("Sincronizando con el anfitrión...", true);
+                }
+                LoadingManager.Instance.UpdateProgress(step, progress);
+            }
+        }
+    }
+
+    private void HandleSamComplete()
+    {
+        // El Selector (que no es MasterClient) recibe la señal y oculta su pantalla
+        if (!PhotonNetwork.IsMasterClient)
+        {
+            if (LoadingManager.Instance != null)
+            {
+                LoadingManager.Instance.Hide();
+            }
+        }
+    }
+
     private async void OnApplicationQuit()
     {
         if (websocket != null && websocket.State == WebSocketState.Open) await websocket.Close();
+    }
+
+    private void OnDestroy()
+    {
+        // Es crucial desuscribirse de los eventos para evitar errores
+        if (PhotonManager.Instance != null)
+        {
+            PhotonManager.Instance.OnJoinedRoomEvent -= OnJoinedPhotonRoom;
+            PhotonManager.Instance.OnProgressUpdateReceived -= HandleProgressUpdate;
+            PhotonManager.Instance.OnSamProcessingComplete -= HandleSamComplete;
+        }
     }
 
     [Serializable]

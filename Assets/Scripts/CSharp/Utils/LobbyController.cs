@@ -172,8 +172,12 @@ public class LobbyController : MonoBehaviourPunCallbacks
         return false;
     }
     
-    public void OnLeaveLobby()
+    public async void OnLeaveLobby()
     {
+         if (BackendManager.Instance != null)
+         {
+            await BackendManager.Instance.RequestBackendMode(BackendMode.Menu);
+         }
          if (PhotonNetwork.InRoom) { PhotonNetwork.LeaveRoom(); }
          SceneManager.LoadScene("1_MainMenu");
     }

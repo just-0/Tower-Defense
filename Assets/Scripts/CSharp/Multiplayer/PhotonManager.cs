@@ -5,7 +5,33 @@ using System;
 
 public class PhotonManager : MonoBehaviourPunCallbacks
 {
-    public static PhotonManager Instance { get; private set; }
+    private static PhotonManager _instance;
+    public static PhotonManager Instance
+    {
+        get
+        {
+            if (_instance == null)
+            {
+                _instance = FindObjectOfType<PhotonManager>();
+                if (_instance == null)
+                {
+                    GameObject managerPrefab = Resources.Load<GameObject>("_Managers");
+                    if (managerPrefab != null)
+                    {
+                        GameObject managerObject = Instantiate(managerPrefab);
+                        _instance = managerObject.GetComponent<PhotonManager>();
+                        managerObject.name = "_Managers (Auto-Instanciado)";
+                    }
+                    else
+                    {
+                        Debug.LogError("¡No se pudo encontrar el prefab '_Managers' en la carpeta Resources! PhotonManager no puede funcionar.");
+                        return null;
+                    }
+                }
+            }
+            return _instance;
+        }
+    }
 
     // Event invoked when the local player successfully joins a room.
     public event Action OnJoinedRoomEvent;
@@ -16,18 +42,34 @@ public class PhotonManager : MonoBehaviourPunCallbacks
     // Event to notify the game controller about a turret selection from the selector.
     public event Action<int> OnTurretSelectReceived;
 
+    // --- NUEVOS EVENTOS PARA PANTALLA DE CARGA ---
+    // Notifica a los clientes (principalmente al Selector) sobre una actualización de progreso.
+    public event Action<string, float> OnProgressUpdateReceived;
+    // Notifica a los clientes que el proceso SAM ha finalizado y la pantalla de carga debe ocultarse.
+    public event Action OnSamProcessingComplete;
+    // --- FIN NUEVOS EVENTOS ---
+
+    private PhotonView photonView; // Añadir referencia al PhotonView
+
     private void Awake()
     {
-        if (Instance != null && Instance != this)
+        if (_instance == null)
+        {
+            // Si no existe, nos convertimos en la instancia única.
+            _instance = this;
+            DontDestroyOnLoad(gameObject); // ¡No destruir este objeto al cargar nuevas escenas!
+            photonView = GetComponent<PhotonView>(); // Obtener el componente PhotonView
+            if (photonView == null)
+            {
+                Debug.LogError("¡PhotonManager necesita un componente PhotonView para funcionar!");
+            }
+        }
+        else if (_instance != this)
         {
             // Si ya existe una instancia (de una escena anterior), destruimos esta nueva.
             Debug.Log("Destruyendo instancia duplicada de PhotonManager.");
             Destroy(gameObject);
-            return;
         }
-        // Si no existe, nos convertimos en la instancia única.
-        Instance = this;
-        DontDestroyOnLoad(gameObject); // ¡No destruir este objeto al cargar nuevas escenas!
     }
 
     public override void OnEnable()
@@ -73,6 +115,17 @@ public class PhotonManager : MonoBehaviourPunCallbacks
     {
         Debug.Log($"Joined room: {PhotonNetwork.CurrentRoom.Name}");
         Debug.Log($"Players in room: {PhotonNetwork.CurrentRoom.PlayerCount}");
+
+        // Ahora que estamos en una sala, podemos identificar al master client
+        if (IsMasterClient())
+        {
+            Debug.Log("Este cliente es el Master Client (Colocador).");
+        }
+        else
+        {
+            Debug.Log("Este cliente es un cliente regular (Selector).");
+        }
+
         OnJoinedRoomEvent?.Invoke();
     }
     
@@ -99,6 +152,59 @@ public class PhotonManager : MonoBehaviourPunCallbacks
         photonView.RPC("RPC_ReceiveTurretSelect", RpcTarget.All, turretIndex);
     }
 
+    // --- NUEVOS MÉTODOS DE RED PARA PROGRESO ---
+    // Llamado por el Colocador para enviar actualizaciones de progreso a otros.
+    public void SendProgressUpdate(string step, float progress)
+    {
+        photonView.RPC("RPC_ReceiveProgressUpdate", RpcTarget.Others, step, progress);
+    }
+
+    // Llamado por el Colocador cuando el proceso SAM ha terminado completamente.
+    public void SendSamComplete()
+    {
+        photonView.RPC("RPC_ReceiveSamComplete", RpcTarget.Others);
+    }
+    // --- FIN NUEVOS MÉTODOS ---
+
+    // --- NUEVOS MÉTODOS PÚBLICOS PARA RETRANSMISIÓN ---
+    
+    /// <summary>
+    /// Retransmite una actualización de progreso a otros jugadores en la sala.
+    /// Solo el Master Client (Colocador) debería llamar a esto.
+    /// </summary>
+    public void BroadcastProgressUpdate(string step, float progress)
+    {
+        if (PhotonNetwork.InRoom && IsMasterClient())
+        {
+            // Usa el RPC existente para enviar la información a los otros jugadores.
+            photonView.RPC("RPC_ReceiveProgressUpdate", RpcTarget.Others, step, progress);
+        }
+    }
+
+    /// <summary>
+    /// Notifica a otros jugadores que el procesamiento SAM ha terminado.
+    /// Solo el Master Client (Colocador) debería llamar a esto.
+    /// </summary>
+    public void BroadcastSamComplete()
+    {
+        if (PhotonNetwork.InRoom && IsMasterClient())
+        {
+            // Usa el RPC existente para notificar a los otros jugadores.
+            photonView.RPC("RPC_ReceiveSamComplete", RpcTarget.Others);
+        }
+    }
+    
+    /// <summary>
+    /// Comprueba si el cliente actual es el Master Client de la sala.
+    /// </summary>
+    /// <returns>True si es el Master Client, false en caso contrario.</returns>
+    public bool IsMasterClient()
+    {
+        return PhotonNetwork.IsMasterClient;
+    }
+
+    // --- FIN NUEVOS MÉTODOS PÚBLICOS ---
+
     [PunRPC]
     private void RPC_ReceivePhaseChange(string phaseCommand)
     {
@@ -112,4 +218,20 @@ public class PhotonManager : MonoBehaviourPunCallbacks
         Debug.Log($"[PhotonManager] RPC de selección de torreta recibido: {turretIndex}");
         OnTurretSelectReceived?.Invoke(turretIndex);
     }
+
+    // --- NUEVOS RPCs PARA MANEJAR EL PROGRESO ---
+    [PunRPC]
+    private void RPC_ReceiveProgressUpdate(string step, float progress)
+    {
+        Debug.Log($"[PhotonManager] RPC de progreso recibido: {step} - {progress}%");
+        OnProgressUpdateReceived?.Invoke(step, progress);
+    }
+
+    [PunRPC]
+    private void RPC_ReceiveSamComplete()
+    {
+        Debug.Log("[PhotonManager] RPC de finalización de SAM recibido.");
+        OnSamProcessingComplete?.Invoke();
+    }
+    // --- FIN NUEVOS RPCs ---
 } 

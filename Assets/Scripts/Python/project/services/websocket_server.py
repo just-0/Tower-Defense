@@ -25,7 +25,7 @@ from config.settings import (
     MESSAGE_TYPE_FINGER_COUNT, FINGER_CAMERA_INDEX, FINGER_CAMERA_WIDTH,
     FINGER_CAMERA_HEIGHT, FINGER_CAMERA_FPS, FINGER_TRANSMISSION_FPS,
     MESSAGE_TYPE_GRID_POSITION, CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT,
-    CAMERA_FPS, MESSAGE_TYPE_GRID_CONFIRMATION
+    CAMERA_FPS, MESSAGE_TYPE_GRID_CONFIRMATION, MESSAGE_TYPE_PROGRESS_UPDATE
 )
 
 class WebSocketServer:
@@ -244,21 +244,35 @@ class WebSocketServer:
             if combat_task and not combat_task.done():
                 combat_task.cancel()
                 
+    async def send_progress_update(self, websocket, step, progress):
+        """Envía una actualización de progreso al cliente."""
+        try:
+            progress_data = {"step": step, "progress": progress}
+            progress_json = json.dumps(progress_data)
+            await websocket.send(bytes([MESSAGE_TYPE_PROGRESS_UPDATE]) + progress_json.encode('utf-8'))
+            # Cedemos el control para asegurar que el mensaje se envíe antes de operaciones bloqueantes
+            await asyncio.sleep(0.01)
+        except Exception as e:
+            print(f"Error enviando actualización de progreso: {e}")
+
     async def process_sam(self, websocket, camera_manager, sam_processor):
         """Process the current frame with SAM and send the result."""
+        await self.send_progress_update(websocket, "Obteniendo fotograma...", 5)
         frame = camera_manager.get_current_frame()
         if frame is None:
+            await self.send_progress_update(websocket, "Error: no se pudo capturar el fotograma.", 0)
             return
 
         # --- DETECCIÓN ARUCO PRIMERO ---
+        await self.send_progress_update(websocket, "Detectando marcador ArUco...", 15)
         if frame.shape[2] == 3:
             frame_bgr_for_aruco = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         else:
             frame_bgr_for_aruco = frame # Asumir que ya está en BGR si no es RGB
         
         aruco_detector = ArucoDetector()
-        # Obtener ids, centros y MUY IMPORTANTE: corners
         ids, centers, aruco_corners, _ = aruco_detector.detect(frame_bgr_for_aruco, draw=False)
+        await self.send_progress_update(websocket, "Marcador ArUco procesado.", 30)
         
         goal = None
         if centers and len(centers) > 0:
@@ -267,22 +281,30 @@ class WebSocketServer:
             print(f"Destino ARUCO detectado en: {goal}")
         else:
             print("No se detectó ARUCO, usando destino por defecto (extremo izquierdo)")
-        # --- FIN DETECCIÓN ARUCO ---
             
-        # Procesar el frame con SAM, pasando los corners del ArUco
-        # El frame original para SAM debe ser RGB
-        mask_bytes = sam_processor.process_image(frame, scene_type="pared", aruco_corners=aruco_corners)
+        await self.send_progress_update(websocket, "Iniciando procesamiento SAM...", 40)
+        
+        # --- CAMBIO CLAVE: Pasar el callback a sam_processor ---
+        mask_bytes = await sam_processor.process_image(
+            frame, 
+            scene_type="pared", 
+            aruco_corners=aruco_corners,
+            progress_callback=self.send_progress_update,
+            websocket=websocket
+        )
+        
         if not mask_bytes:
+            await self.send_progress_update(websocket, "Error durante el procesamiento SAM.", 0)
             return
-            
-        # Send the mask
+        
+        await self.send_progress_update(websocket, "Máscara de segmentación generada.", 80)
         await websocket.send(bytes([MESSAGE_TYPE_MASK]) + mask_bytes)
         print("Sent mask data")
         
-        # Process and send A* path
+        await self.send_progress_update(websocket, "Calculando ruta A*...", 90)
         path = handle_astar_from_mask(mask_bytes, False, goal=goal)
         if path:
-            path_data = [{"x": x, "y": y} for x, y in path]
+            path_data = {"points": [{"x": x, "y": y} for x, y in path]}
             path_json = json.dumps(path_data)
             try:
                 await websocket.send(bytes([MESSAGE_TYPE_PATH]) + path_json.encode('utf-8'))

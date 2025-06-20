@@ -6,6 +6,7 @@ Configuration settings for the object detection application.
 WEBSOCKET_HOST = "localhost"
 WEBSOCKET_PORT = 8767
 FINGER_TRACKING_PORT = 8768  # New port for finger tracking WebSocket
+MENU_GESTURE_PORT = 8766 # Port for the main menu gesture server
 
 # Camera settings for SAM
 CAMERA_INDEX = 1  # Index of the camera to use for SAM
@@ -48,6 +49,10 @@ MESSAGE_TYPE_PATH = 4
 MESSAGE_TYPE_FINGER_COUNT = 5  # New message type for finger count
 MESSAGE_TYPE_GRID_POSITION = 6  # New message type for grid position
 MESSAGE_TYPE_GRID_CONFIRMATION = 7 # New message for confirmed grid position
+MESSAGE_TYPE_SERVER_STATUS = 8 # New message for server status (e.g., camera ready)
+MESSAGE_TYPE_SWITCH_CAMERA = 9 # New message to request a camera switch
+MESSAGE_TYPE_CAMERA_LIST = 10 # New message to send the list of available cameras
+MESSAGE_TYPE_PROGRESS_UPDATE = 11 # For sending progress updates during long tasks
 
 # Mask validation settings
 MIN_BLACK_RATIO = 0.05

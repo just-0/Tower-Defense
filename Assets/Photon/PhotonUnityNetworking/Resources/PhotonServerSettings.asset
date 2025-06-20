@@ -44,6 +44,8 @@ MonoBehaviour:
   - LoadGameScene
   - StartGameSequence
   - RPC_ReceiveTurretSelect
+  - RPC_ReceiveProgressUpdate
+  - RPC_ReceiveSamComplete
   DisableAutoOpenWizard: 1
   ShowSettings: 0
   DevRegionSetOnce: 1

@@ -11,23 +11,52 @@ import math
 from collections import deque
 
 
+def scan_for_available_cameras(max_index_to_check=10):
+    """
+    Escanea todos los índices de cámara hasta un máximo y devuelve una lista de los que están disponibles.
+    
+    Args:
+        max_index_to_check (int): El índice más alto a probar (e.g., 10 para probar de 0 a 9).
+        
+    Returns:
+        list: Una lista de enteros con los índices de las cámaras disponibles.
+    """
+    available_indices = []
+    print(f"Buscando cámaras disponibles hasta el índice {max_index_to_check-1}...")
+    for index in range(max_index_to_check):
+        cap = cv2.VideoCapture(index)
+        if cap.isOpened():
+            print(f"  - Cámara encontrada en el índice {index}.")
+            available_indices.append(index)
+            cap.release()
+    print(f"Búsqueda finalizada. Cámaras encontradas: {available_indices}")
+    return available_indices
+
+
 class FingerCounter:
     """
     Clase mejorada para rastrear manos y contar dedos levantados usando MediaPipe.
     Implementa filtrado temporal, detección de orientación de la mano y visualización.
     """
     
-    def __init__(self, camera_index=0, width=640, height=480, fps=30):
+    def __init__(self, camera_index=None, width=640, height=480, fps=30):
         """
         Inicializa el contador de dedos con opciones mejoradas.
         
         Args:
-            camera_index (int): Índice de la cámara a usar
+            camera_index (int, optional): Índice específico de la cámara a usar. Si es None, busca una disponible.
             width (int): Resolución de ancho de cámara
             height (int): Resolución de alto de cámara
             fps (int): Cuadros por segundo de la cámara
         """
-        self.camera_index = camera_index
+        # Si no se especifica un índice, búscalo automáticamente.
+        if camera_index is None:
+            available_cams = scan_for_available_cameras()
+            # Usar la primera cámara encontrada por defecto, o -1 si no hay ninguna
+            self.camera_index = available_cams[0] if available_cams else -1
+        else:
+            self.camera_index = camera_index
+            
         self.width = width
         self.height = height
         self.fps = fps
@@ -53,6 +82,7 @@ class FingerCounter:
         self.debug_frame = None
         self.processed_frame = None
         self.lock = threading.Lock()
+        self.camera_switch_request = None # Flag para solicitar cambio de cámara
         
         # Variables para seguimiento de dedos
         self.finger_count = 0
@@ -79,8 +109,13 @@ class FingerCounter:
         Returns:
             bool: True si la cámara se inició correctamente, False de lo contrario.
         """
+        if self.camera_index == -1:
+            print("Error: No se puede iniciar la cámara porque no se encontró ningún índice de cámara válido.")
+            return False
+
         try:
             if self.camera is None:
+                print(f"Intentando abrir la cámara en el índice: {self.camera_index}")
                 self.camera = cv2.VideoCapture(self.camera_index)
                 
                 # Intenta abrir la cámara varias veces si falla al principio
@@ -90,7 +125,7 @@ class FingerCounter:
                 while not self.camera.isOpened() and retry_count < max_retries:
                     print(f"Advertencia: No se pudo abrir la cámara {self.camera_index}. Intento {retry_count+1}/{max_retries}")
                     time.sleep(1)
-                    self.camera = cv2.VideoCapture(self.camera_index)
+                    self.camera.open(self.camera_index)
                     retry_count += 1
                     
                 if not self.camera.isOpened():
@@ -115,17 +150,68 @@ class FingerCounter:
     def _camera_thread(self):
         """Hilo en segundo plano que captura continuamente frames y procesa manos."""
         frame_count = 0
+        read_fail_count = 0
         start_time = time.time()
         actual_fps = 0
         
         while self.is_running:
             try:
+                # --- LÓGICA DE CAMBIO DE CÁMARA ---
+                with self.lock:
+                    if self.camera_switch_request is not None:
+                        new_index = self.camera_switch_request
+                        self.camera_switch_request = None
+                        print(f"Cambiando al índice de cámara {new_index}...")
+                        
+                        # Detenemos y liberamos la cámara actual
+                        if self.camera.isOpened():
+                            self.camera.release()
+                        
+                        # Abrimos la nueva cámara
+                        self.camera_index = new_index
+                        self.camera = cv2.VideoCapture(self.camera_index)
+                        
+                        if not self.camera.isOpened():
+                            print(f"Error: No se pudo cambiar a la cámara {self.camera_index}.")
+                            # Opcional: intentar volver a la anterior o simplemente detener
+                            self.is_running = False
+                            return # Salir del hilo si la nueva cámara falla
+                        
+                        # Reseteamos contadores para la nueva cámara
+                        read_fail_count = 0
+                        frame_count = 0
+                        print(f"Cámara cambiada con éxito al índice {self.camera_index}.")
+                # -----------------------------------
+
+                # --- LÓGICA DE RECUPERACIÓN DE CÁMARA ---
+                if not self.camera.isOpened():
+                    print("Advertencia: La cámara no está abierta. Intentando reiniciar...")
+                    self.camera.release()
+                    time.sleep(0.5)
+                    self.camera.open(self.camera_index)
+                    if not self.camera.isOpened():
+                        time.sleep(1.0) # Esperar más si el reinicio falla
+                        continue
+                # ----------------------------------------
+
                 ret, frame = self.camera.read()
                 
                 if not ret:
-                    print("Advertencia: No se pudo leer el frame. Reintentando...")
+                    read_fail_count += 1
+                    print(f"Advertencia: No se pudo leer el frame. Fallo #{read_fail_count}")
+                    # Si falla muchas veces seguidas, intentamos un reinicio completo
+                    if read_fail_count > 20: # Tras ~2 segundos de fallos
+                        print("Demasiados fallos de lectura. Reiniciando la cámara por completo...")
+                        self.camera.release()
+                        self.camera = cv2.VideoCapture(self.camera_index)
+                        self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+                        self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+                        self.camera.set(cv2.CAP_PROP_FPS, self.fps)
+                        read_fail_count = 0 # Reiniciar contador
                     time.sleep(0.1)
                     continue
+                
+                read_fail_count = 0 # El reinicio fue exitoso en la primera lectura
                 
                 # Voltear horizontalmente para una experiencia tipo espejo
                 frame = cv2.flip(frame, 1)
@@ -466,6 +552,19 @@ class FingerCounter:
         with self.lock:
             self.debug_mode = enabled
     
+    def switch_camera(self, new_index):
+        """
+        Solicita un cambio de cámara al hilo principal.
+        
+        Args:
+            new_index (int): El nuevo índice de cámara a utilizar.
+        """
+        with self.lock:
+            # No hacemos nada si se solicita el mismo índice
+            if new_index == self.camera_index:
+                return
+            self.camera_switch_request = new_index
+
     def stop_camera(self):
         """Detiene la cámara y libera recursos."""
         try:
@@ -483,7 +582,7 @@ class FingerCounter:
 # Ejemplo de uso
 if __name__ == "__main__":
     # Crear instancia del contador de dedos
-    finger_counter = FingerCounter(camera_index=0)
+    finger_counter = FingerCounter(camera_index=None)
     
     # Activar modo depuración
     finger_counter.set_debug_mode(True)

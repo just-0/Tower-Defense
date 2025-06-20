@@ -24,6 +24,12 @@ public class GameManager : MonoBehaviour
 
     void Start()
     {
+        // Al iniciar la escena del juego, ocultamos la pantalla de carga que persistió.
+        if (LoadingManager.Instance != null)
+        {
+            LoadingManager.Instance.Hide();
+        }
+
         // Suscribirse a eventos relevantes
         Monster.OnMonsterDeath += HandleMonsterDeath;
         PlayerBase.OnBaseDestroyed += HandleBaseDestroyed;

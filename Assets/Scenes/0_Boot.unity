@@ -402,6 +402,8 @@ GameObject:
   - component: {fileID: 786549392}
   - component: {fileID: 786549391}
   - component: {fileID: 786549390}
+  - component: {fileID: 786549393}
+  - component: {fileID: 786549394}
   m_Layer: 0
   m_Name: GlobalManagers
   m_TagString: Untagged
@@ -450,6 +452,31 @@ Transform:
   - {fileID: 1175159081}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &786549393
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 786549389}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: da66a37389eff72268065c446fa4b470, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+--- !u!114 &786549394
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 786549389}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c14a90ed589a78c80b511e0306411395, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  loadingScreenPrefab: {fileID: 3517928862981573088, guid: 59e1f09fb78171335961495fb2a08f8b, type: 3}
 --- !u!1001 &1175159080
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -545,9 +572,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e3847f38820aa8d5fa1576c11bd5cba0, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  pythonExecutablePath: 
-  pythonScriptPath: Assets/Scripts/Python/project/main_launcher.py
-  isProcessRunning: 0
 --- !u!4 &1588883193
 Transform:
   m_ObjectHideFlags: 0
