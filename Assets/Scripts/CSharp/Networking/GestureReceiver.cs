@@ -49,7 +49,7 @@ public class GestureReceiver : MonoBehaviour
         else if (!(SAM is SAMSystemController))
         {
             //Debug.LogWarning("GestureReceiver: La referencia SAM no es del tipo SAMSystemController. Verifica la asignación en el Inspector.");
-        }
+        } 
 
         websocket = new WebSocket("ws://localhost:8768");
 

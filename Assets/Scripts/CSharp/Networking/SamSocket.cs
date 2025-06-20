@@ -36,6 +36,14 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         public float progress;
     }
 
+    [Header("Cursor y Rango")]
+    [Tooltip("La escala del objeto visual que sigue al dedo del jugador.")]
+    [SerializeField] private float cursorScale = 0.6f;
+    [Tooltip("La cantidad de segmentos usados para dibujar el círculo de rango. Más segmentos significa un círculo más suave.")]
+    [SerializeField] private int rangeIndicatorSegments = 50;
+    private GameObject rangeIndicatorObject;
+    private LineRenderer rangeIndicatorRenderer;
+
     [Header("Componentes UI y Visuales")]
     [SerializeField] private RawImage cameraDisplay;
     [SerializeField] private RawImage maskDisplay;
@@ -104,7 +112,12 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         if (maskDisplay != null) maskDisplay.enabled = false;
         if (maskDisplay != null) maskDisplay.color = Color.white;
         
-        if (gridCursor != null) targetCursorPosition = gridCursor.transform.position;
+        if (gridCursor != null)
+        {
+            gridCursor.transform.localScale = Vector3.one * cursorScale;
+            targetCursorPosition = gridCursor.transform.position;
+            CreateRangeIndicator();
+        }
 
         // Suscribirse a los eventos del MainWebSocketClient
         if (mainWebSocketClient != null)
@@ -532,6 +545,8 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             );
         }
         
+        UpdateRangeIndicator();
+
         // ProcessQueuedMessages(); // Eliminado, MainWebSocketClient lo maneja
         
         // #if !UNITY_WEBGL || UNITY_EDITOR // Eliminado, MainWebSocketClient lo maneja
@@ -672,6 +687,62 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             mainWebSocketClient.OnGridPositionConfirmed -= HandleGridConfirmation;
             mainWebSocketClient.OnProgressUpdateReceived -= HandleProgressUpdate;
         }
+    }
+
+    private void CreateRangeIndicator()
+    {
+        if (gridCursor == null) return;
+
+        rangeIndicatorObject = new GameObject("RangeIndicator");
+        rangeIndicatorObject.transform.SetParent(gridCursor.transform, false);
+        rangeIndicatorObject.transform.localPosition = Vector3.zero;
+
+        rangeIndicatorRenderer = rangeIndicatorObject.AddComponent<LineRenderer>();
+        rangeIndicatorRenderer.material = new Material(Shader.Find("Legacy Shaders/Particles/Alpha Blended Premultiply"));
+        rangeIndicatorRenderer.startColor = new Color(1, 0, 0, 0.6f);
+        rangeIndicatorRenderer.endColor = new Color(1, 0, 0, 0.6f);
+        rangeIndicatorRenderer.startWidth = 0.1f;
+        rangeIndicatorRenderer.endWidth = 0.1f;
+        rangeIndicatorRenderer.positionCount = rangeIndicatorSegments + 1;
+        rangeIndicatorRenderer.useWorldSpace = false;
+        rangeIndicatorRenderer.loop = true;
+    }
+
+    private void UpdateRangeIndicator()
+    {
+        if (rangeIndicatorObject == null || rangeIndicatorRenderer == null || turretManager == null)
+        {
+            return;
+        }
+
+        TurretData selectedTurret = turretManager.GetSelectedTurretData();
+        bool shouldBeVisible = isCursorVisible && selectedTurret != null;
+
+        if (rangeIndicatorObject.activeSelf != shouldBeVisible)
+        {
+            rangeIndicatorObject.SetActive(shouldBeVisible);
+        }
+
+        if (!shouldBeVisible)
+        {
+            return;
+        }
+
+        float radius = selectedTurret.range;
+        if (rangeIndicatorRenderer.positionCount != rangeIndicatorSegments + 1)
+        {
+            rangeIndicatorRenderer.positionCount = rangeIndicatorSegments + 1;
+        }
+
+        Vector3[] points = new Vector3[rangeIndicatorSegments + 1];
+        for (int i = 0; i <= rangeIndicatorSegments; i++)
+        {
+            float angle = ((float)i / (float)rangeIndicatorSegments) * 2.0f * Mathf.PI;
+            float x = radius * Mathf.Cos(angle);
+            float y = radius * Mathf.Sin(angle);
+            points[i] = new Vector3(x, y, 0);
+        }
+        rangeIndicatorRenderer.SetPositions(points);
     }
 
     public void SetCursorVisibility(bool visible)

@@ -181,6 +181,19 @@ public class TurretManager : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Devuelve los datos de la torreta actualmente seleccionada.
+    /// </summary>
+    /// <returns>El ScriptableObject TurretData de la torreta seleccionada, o null si no hay ninguna.</returns>
+    public TurretData GetSelectedTurretData()
+    {
+        if (turretDatas == null || turretDatas.Count == 0 || selectedTurretIndex < 0 || selectedTurretIndex >= turretDatas.Count)
+        {
+            return null;
+        }
+        return turretDatas[selectedTurretIndex];
+    }
+
     // Futuras expansiones:
     // - Seleccionar tipo de torreta basado en gestos/UI
     // - Vender/Mejorar torretas
