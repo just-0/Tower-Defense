@@ -2,6 +2,7 @@ import asyncio
 import websockets
 import signal
 import sys
+import platform
 from services.multiplayer import game_server, gesture_server
 from config.settings import WEBSOCKET_HOST, MENU_GESTURE_PORT
 
@@ -83,24 +84,44 @@ async def handle_unity_commands(websocket):
 
 async def main():
     """Función principal para iniciar el servidor de control y el de menú."""
-    loop = asyncio.get_running_loop()
-    stop = loop.create_future()
-    loop.add_signal_handler(signal.SIGINT, stop.set_result, None)
-    loop.add_signal_handler(signal.SIGTERM, stop.set_result, None)
+    # En Windows, add_signal_handler no está implementado para el event loop por defecto.
+    # Usaremos un enfoque diferente para la detención.
+    stop_event = asyncio.Event()
+
+    # Función para manejar la señal de apagado de forma segura entre plataformas.
+    def shutdown_handler():
+        if not stop_event.is_set():
+            print("Iniciando apagado ordenado...")
+            stop_event.set()
+
+    if platform.system() != "Windows":
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, shutdown_handler)
+    else:
+        # En Windows, el manejador de señales se simula de otra forma,
+        # usualmente con la captura de KeyboardInterrupt, que ya está al final del script.
+        pass
 
     # Iniciar el servidor de menú por defecto
     await start_menu_server()
 
-    async with websockets.serve(handle_unity_commands, "localhost", CONTROL_PORT):
-        print(f"Servidor de control iniciado en ws://localhost:{CONTROL_PORT}")
-        print("Backend listo y esperando órdenes... (Presiona Ctrl+C para salir)")
-        await stop
+    try:
+        async with websockets.serve(handle_unity_commands, "localhost", CONTROL_PORT):
+            print(f"Servidor de control iniciado en ws://localhost:{CONTROL_PORT}")
+            print("Backend listo y esperando órdenes... (Presiona Ctrl+C para salir)")
+            await stop_event.wait()
 
-    print("Cerrando todos los servidores.")
+    except asyncio.CancelledError:
+        # Esto es esperado durante el apagado normal.
+        pass
+    finally:
+        print("Cerrando todos los servidores.")
+        await stop_current_servers()
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Backend cerrado por el usuario.") 
+        print("Backend cerrado por el usuario (Ctrl+C).") 
