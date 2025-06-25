@@ -25,13 +25,13 @@ from config.settings import (
 
 class FastObjectDetector:
     """
-    Ultra-fast and reliable object detection combining SAM with traditional CV methods.
-    Specifically optimized for detecting colored objects like paper sheets on surfaces.
+    Ultra-fast and reliable object detection optimized for colored paper sheets on walls.
+    Simplified approach focusing on color discrimination and geometric validation.
     """
     
     def __init__(self):
         """Initialize the detection system."""
-        print("Inicializando detector rápido de objetos...")
+        print("Inicializando detector optimizado para hojas de colores...")
         
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Usando dispositivo: {self.device}")
@@ -53,11 +53,11 @@ class FastObjectDetector:
         # Thread pool for parallel processing
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         
-        print("Detector rápido de objetos listo.")
+        print("Detector optimizado listo.")
 
     async def process_image(self, image, scene_type="pared", hand_points=None, aruco_corners=None, progress_callback=None, websocket=None):
         """
-        Process image with ultra-fast multi-method approach.
+        Process image with optimized approach for colored sheets on walls.
         
         Args:
             image (numpy.ndarray): Input image in RGB format
@@ -76,225 +76,226 @@ class FastObjectDetector:
             if progress_callback and websocket:
                 await progress_callback(websocket, step, progress)
 
-        await send_progress("Iniciando detección ultra-rápida...", 5)
+        await send_progress("Iniciando detección optimizada...", 5)
         
         # Save debug input
         save_debug_image(image, DEBUG_INPUT_IMAGE)
         
         h, w = image.shape[:2]
         
-        # Step 1: Fast preprocessing (10ms)
+        # Step 1: Fast preprocessing
         await send_progress("Pre-procesando imagen...", 15)
-        processed_image = self._fast_preprocess(image)
+        processed_image = self._optimized_preprocess(image)
         
-        # Step 2: Parallel detection using multiple methods
-        await send_progress("Ejecutando detección paralela...", 30)
+        # Step 2: Primary color-based detection (optimized for colored sheets)
+        await send_progress("Detectando hojas de colores...", 40)
         
-        # Run multiple detection methods in parallel
+        # Use only the optimized color detection - it's the most reliable for this use case
         loop = asyncio.get_running_loop()
-        
-        # Create tasks for parallel execution
-        tasks = []
-        
-        # Task 1: Color-based detection (very fast)
-        tasks.append(loop.run_in_executor(
+        color_mask = await loop.run_in_executor(
             self.executor, 
-            self._color_based_detection, 
+            self._optimized_color_detection, 
             processed_image
-        ))
+        )
         
-        # Task 2: Contour-based detection (fast)
-        tasks.append(loop.run_in_executor(
-            self.executor, 
-            self._contour_based_detection, 
-            processed_image
-        ))
+        # Step 3: Optional SAM validation for edge cases (only if needed)
+        sam_mask = None
+        if self.use_sam and color_mask is not None:
+            detected_ratio = np.sum(color_mask == 0) / (h * w)
+            # Only use SAM if color detection seems uncertain
+            if detected_ratio < 0.02 or detected_ratio > 0.4:
+                await send_progress("Validando con SAM...", 70)
+                sam_mask = await loop.run_in_executor(
+                    self.executor, 
+                    self._lightweight_sam_detection, 
+                    cv2.resize(processed_image, (320, 240))
+                )
         
-        # Task 3: SAM detection (if available and for high-quality results)
-        if self.use_sam and image.shape[0] * image.shape[1] < 640*480:  # Only for smaller images
-            tasks.append(loop.run_in_executor(
-                self.executor, 
-                self._sam_detection, 
-                cv2.resize(processed_image, (320, 240))  # Reduced resolution for speed
-            ))
+        # Step 4: Combine results intelligently
+        await send_progress("Procesando resultado final...", 85)
+        final_mask = self._intelligent_combine(color_mask, sam_mask, h, w)
         
-        # Wait for all tasks to complete
-        await send_progress("Combinando resultados...", 70)
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Step 5: Clear ArUco areas
+        if aruco_corners is not None and final_mask is not None:
+            final_mask = self._clear_aruco_area_from_mask(final_mask, aruco_corners)
         
-        # Process results
-        color_mask = results[0] if len(results) > 0 and not isinstance(results[0], Exception) else None
-        contour_mask = results[1] if len(results) > 1 and not isinstance(results[1], Exception) else None
-        sam_mask = results[2] if len(results) > 2 and not isinstance(results[2], Exception) else None
-        
-        # Step 3: Intelligent mask combination
-        await send_progress("Fusionando máscaras...", 85)
-        combined_mask = self._combine_masks(color_mask, contour_mask, sam_mask, h, w)
-        
-        # Step 4: Clear ArUco areas
-        if aruco_corners is not None and combined_mask is not None:
-            combined_mask = self._clear_aruco_area_from_mask(combined_mask, aruco_corners)
-        
-        # Step 5: Final validation and cleanup
+        # Step 6: Final validation and cleanup
         await send_progress("Validando resultado...", 95)
-        if combined_mask is None:
-            combined_mask = self._generate_emergency_fallback(image)
+        if final_mask is None:
+            final_mask = self._simple_fallback(image)
         
-        # Apply final morphological operations for clean edges
-        combined_mask = self._final_cleanup(combined_mask)
+        # Apply final cleanup
+        final_mask = self._final_cleanup(final_mask)
         
         # Save debug output
-        save_debug_image(combined_mask, DEBUG_MASK_FINAL)
+        save_debug_image(final_mask, DEBUG_MASK_FINAL)
         
         processing_time = time.time() - start_time
         print(f"Detección completada en {processing_time:.2f} segundos")
         
-        return mask_to_png_bytes(combined_mask)
+        return mask_to_png_bytes(final_mask)
 
-    def _fast_preprocess(self, image):
-        """Ultra-fast preprocessing optimized for colored objects."""
-        # Apply minimal but effective preprocessing
-        # 1. Slight gaussian blur to reduce noise
-        blurred = cv2.GaussianBlur(image, (3, 3), 0.5)
+    def _optimized_preprocess(self, image):
+        """Minimal but effective preprocessing for colored sheet detection."""
+        # Light gaussian blur to reduce camera noise
+        blurred = cv2.GaussianBlur(image, (3, 3), 0.8)
         
-        # 2. Enhance contrast in LAB space (faster than multiple operations)
+        # Enhance contrast slightly in LAB space
         lab = cv2.cvtColor(blurred, cv2.COLOR_RGB2LAB)
         l, a, b = cv2.split(lab)
         
-        # Apply CLAHE only to L channel
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        # Very mild CLAHE to preserve color relationships
+        clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
         l = clahe.apply(l)
         
-        # Merge and convert back
         enhanced_lab = cv2.merge([l, a, b])
         enhanced = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2RGB)
         
         return enhanced
 
-    def _color_based_detection(self, image):
-        """Ultra-fast color-based detection for colored objects like paper sheets."""
+    def _optimized_color_detection(self, image):
+        """
+        Optimized detection specifically for colored paper sheets on walls.
+        Focuses on high color purity and geometric constraints.
+        """
         try:
             h, w = image.shape[:2]
+            print("Detectando hojas de colores con método optimizado...")
             
-            # Convert to HSV for better color separation
+            # Convert to HSV for better color analysis
             hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+            hue, saturation, value = cv2.split(hsv)
             
-            # Define color ranges for common paper/object colors
+            # Strategy 1: High saturation objects (colored papers)
+            # Use adaptive threshold based on image statistics
+            sat_mean = np.mean(saturation)
+            sat_std = np.std(saturation)
+            
+            # More conservative threshold - we want clearly colored objects
+            sat_threshold = max(60, int(sat_mean + sat_std * 1.2))
+            print(f"Umbral de saturación: {sat_threshold}")
+            
+            # High saturation mask
+            high_sat_mask = saturation > sat_threshold
+            
+            # Strategy 2: Color purity analysis
+            # Detect regions with strong color dominance
+            # Calculate color variance in small neighborhoods
+            kernel = np.ones((5, 5), np.float32) / 25
+            hue_smoothed = cv2.filter2D(hue.astype(np.float32), -1, kernel)
+            hue_variance = np.abs(hue.astype(np.float32) - hue_smoothed)
+            
+            # Low variance indicates uniform colored regions
+            color_purity_mask = hue_variance < 15  # Uniform color regions
+            
+            # Strategy 3: Specific color ranges (tighter ranges for better precision)
             color_ranges = [
-                # Red range
-                ([0, 50, 50], [10, 255, 255]),
-                ([170, 50, 50], [180, 255, 255]),
-                # Green range
-                ([40, 50, 50], [80, 255, 255]),
-                # Blue range  
-                ([100, 50, 50], [130, 255, 255]),
-                # Yellow range
-                ([20, 50, 50], [40, 255, 255]),
-                # Purple/Magenta range
-                ([140, 50, 50], [170, 255, 255]),
+                # Azul
+                ([100, 60, 50], [120, 255, 255]),
+                # Verde
+                ([40, 60, 50], [80, 255, 255]),
+                # Rojo (dos rangos)
+                ([0, 60, 50], [10, 255, 255]),
+                ([170, 60, 50], [180, 255, 255]),
+                # Rosa/Magenta
+                ([140, 60, 50], [160, 255, 255]),
+                # Amarillo
+                ([20, 60, 50], [30, 255, 255]),
             ]
             
-            combined_color_mask = np.zeros((h, w), dtype=np.uint8)
-            
-            # Apply each color range
-            for (lower, upper) in color_ranges:
+            specific_colors_mask = np.zeros((h, w), dtype=np.uint8)
+            for i, (lower, upper) in enumerate(color_ranges):
                 lower = np.array(lower)
                 upper = np.array(upper)
+                range_mask = cv2.inRange(hsv, lower, upper)
                 
-                mask = cv2.inRange(hsv, lower, upper)
-                
-                # Remove noise
-                kernel = np.ones((3, 3), np.uint8)
-                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-                mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-                
-                # Only keep significant areas
-                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                # Only keep regions with sufficient area
+                contours, _ = cv2.findContours(range_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 for contour in contours:
                     area = cv2.contourArea(contour)
-                    if area > 500:  # Minimum area threshold
-                        cv2.drawContours(combined_color_mask, [contour], -1, 255, -1)
+                    if area > 800:  # Minimum area for a sheet
+                        cv2.drawContours(specific_colors_mask, [contour], -1, 255, -1)
             
-            # Create binary mask (0 = obstacle, 255 = free)
-            result_mask = np.ones((h, w), dtype=np.uint8) * 255
-            result_mask[combined_color_mask > 0] = 0
+            # Combine strategies using intersection (more conservative)
+            combined_mask = cv2.bitwise_and(
+                high_sat_mask.astype(np.uint8) * 255,
+                color_purity_mask.astype(np.uint8) * 255
+            )
             
-            return result_mask
+            # Add specific color detections
+            combined_mask = cv2.bitwise_or(combined_mask, specific_colors_mask)
             
-        except Exception as e:
-            print(f"Error en detección por color: {e}")
-            return None
-
-    def _contour_based_detection(self, image):
-        """Fast edge and contour-based detection."""
-        try:
-            h, w = image.shape[:2]
+            # Morphological cleaning - conservative
+            kernel_small = np.ones((3, 3), np.uint8)
+            combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel_small, iterations=1)
             
-            # Convert to grayscale
-            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            kernel_close = np.ones((5, 5), np.uint8)
+            combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel_close, iterations=2)
             
-            # Apply adaptive histogram equalization
-            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-            enhanced_gray = clahe.apply(gray)
+            # Geometric validation for sheet-like objects
+            contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            final_mask = np.zeros((h, w), dtype=np.uint8)
             
-            # Edge detection with multiple scales
-            edges1 = cv2.Canny(enhanced_gray, 50, 150)
-            edges2 = cv2.Canny(enhanced_gray, 30, 100)
+            min_area = 1000  # Minimum area for a sheet
+            max_area = h * w * 0.25  # Maximum reasonable area
             
-            # Combine edges
-            combined_edges = cv2.bitwise_or(edges1, edges2)
-            
-            # Dilate edges to create connected regions
-            kernel = np.ones((3, 3), np.uint8)
-            dilated_edges = cv2.dilate(combined_edges, kernel, iterations=2)
-            
-            # Find contours
-            contours, _ = cv2.findContours(dilated_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            # Create mask
-            contour_mask = np.zeros((h, w), dtype=np.uint8)
-            
+            objects_found = 0
             for contour in contours:
                 area = cv2.contourArea(contour)
-                # Filter by area and aspect ratio
-                if 300 < area < (h * w * 0.3):
-                    # Check if contour is roughly rectangular (good for paper sheets)
-                    epsilon = 0.02 * cv2.arcLength(contour, True)
-                    approx = cv2.approxPolyDP(contour, epsilon, True)
+                
+                if min_area < area < max_area:
+                    # Check if roughly rectangular (good for paper sheets)
+                    x, y, w_rect, h_rect = cv2.boundingRect(contour)
+                    aspect_ratio = max(w_rect, h_rect) / max(min(w_rect, h_rect), 1)
                     
-                    if len(approx) >= 4:  # At least 4 corners (roughly rectangular)
-                        cv2.drawContours(contour_mask, [contour], -1, 255, -1)
+                    # Calculate solidity (convex hull ratio)
+                    hull = cv2.convexHull(contour)
+                    hull_area = cv2.contourArea(hull)
+                    solidity = area / hull_area if hull_area > 0 else 0
+                    
+                    # Calculate extent (bounding box ratio)
+                    extent = area / (w_rect * h_rect)
+                    
+                    # Criteria for sheet-like objects
+                    if (aspect_ratio < 4 and solidity > 0.6 and extent > 0.4):
+                        cv2.drawContours(final_mask, [contour], -1, 255, -1)
+                        objects_found += 1
+                        print(f"Hoja {objects_found}: área={area:.0f}, ratio={aspect_ratio:.2f}, solidez={solidity:.2f}, extensión={extent:.2f}")
             
-            # Create binary mask (0 = obstacle, 255 = free)
+            print(f"Total de hojas detectadas: {objects_found}")
+            
+            # Create result mask (0 = obstacle/sheet, 255 = free space)
             result_mask = np.ones((h, w), dtype=np.uint8) * 255
-            result_mask[contour_mask > 0] = 0
+            result_mask[final_mask > 0] = 0
+            
+            detected_ratio = np.sum(final_mask > 0) / (h * w)
+            print(f"Ratio de hojas detectadas: {detected_ratio:.4f}")
             
             return result_mask
             
         except Exception as e:
-            print(f"Error en detección por contornos: {e}")
+            print(f"Error en detección optimizada por color: {e}")
             return None
 
-    def _sam_detection(self, image):
-        """Fast SAM detection on reduced resolution."""
+    def _lightweight_sam_detection(self, image):
+        """Lightweight SAM detection for validation purposes."""
         try:
             if not self.use_sam:
                 return None
                 
             h, w = image.shape[:2]
             
-            # Set image for SAM predictor
             self.sam_predictor.set_image(image)
             
-            # Generate automatic masks with optimized parameters for speed
+            # Very lightweight mask generation
             mask_generator = SamAutomaticMaskGenerator(
                 self.sam,
-                points_per_side=16,  # Reduced for speed
-                pred_iou_thresh=0.8,
-                stability_score_thresh=0.85,
-                crop_n_layers=0,  # No cropping for speed
+                points_per_side=12,  # Very reduced for speed
+                pred_iou_thresh=0.9,
+                stability_score_thresh=0.9,
+                crop_n_layers=0,
                 crop_n_points_downscale_factor=1,
-                min_mask_region_area=100,
+                min_mask_region_area=200,
             )
             
             masks = mask_generator.generate(image)
@@ -302,31 +303,27 @@ class FastObjectDetector:
             if not masks:
                 return None
             
-            # Combine valid masks
+            # Only keep masks that look like sheets
             combined_mask = np.ones((h, w), dtype=np.uint8) * 255
             
             for mask_data in masks:
                 mask = mask_data['segmentation'].astype(np.uint8)
                 area = mask_data.get('area', np.sum(mask))
                 
-                # Filter masks by area
+                # Filter by reasonable area for sheets
                 area_ratio = area / (h * w)
-                if 0.01 < area_ratio < 0.5:  # Reasonable object size
+                if 0.02 < area_ratio < 0.3:
                     combined_mask[mask > 0] = 0
             
             return combined_mask
             
         except Exception as e:
-            print(f"Error en detección SAM: {e}")
+            print(f"Error en SAM ligero: {e}")
             return None
 
-    def _combine_masks(self, color_mask, contour_mask, sam_mask, target_h, target_w):
-        """Intelligently combine masks from different detection methods."""
+    def _intelligent_combine(self, color_mask, sam_mask, target_h, target_w):
+        """Intelligent combination prioritizing color detection with SAM validation."""
         try:
-            # Create base mask
-            combined = np.ones((target_h, target_w), dtype=np.uint8) * 255
-            
-            # Resize masks if needed
             def resize_mask(mask):
                 if mask is None:
                     return None
@@ -335,52 +332,68 @@ class FastObjectDetector:
                 return mask
             
             color_mask = resize_mask(color_mask)
-            contour_mask = resize_mask(contour_mask)
             sam_mask = resize_mask(sam_mask)
             
-            # Voting system: if 2+ methods agree on a pixel being an obstacle, mark it
-            votes = np.zeros((target_h, target_w), dtype=np.uint8)
-            
+            # Primary: use color detection
             if color_mask is not None:
-                votes[color_mask == 0] += 1
+                result = color_mask.copy()
+                color_ratio = np.sum(color_mask == 0) / (target_h * target_w)
+                print(f"Detección principal por color: {color_ratio:.4f}")
                 
-            if contour_mask is not None:
-                votes[contour_mask == 0] += 1
+                # Use SAM as validation only if color detection seems inadequate
+                if sam_mask is not None and color_ratio < 0.01:
+                    sam_ratio = np.sum(sam_mask == 0) / (target_h * target_w)
+                    if 0.01 < sam_ratio < 0.3:
+                        print("Usando SAM como respaldo por baja detección de color")
+                        result = sam_mask.copy()
                 
-            if sam_mask is not None:
-                votes[sam_mask == 0] += 1
+                return result
             
-            # Apply voting threshold
-            threshold = 1 if sam_mask is None else 2  # Lower threshold if SAM not available
-            combined[votes >= threshold] = 0
+            # Fallback to SAM if color detection failed
+            elif sam_mask is not None:
+                print("Usando SAM como método principal (color falló)")
+                return sam_mask
             
-            # If no significant detection, try color-only approach with lower threshold
-            obstacle_ratio = np.sum(combined == 0) / (target_h * target_w)
-            if obstacle_ratio < 0.01 and color_mask is not None:
-                print("Aplicando detección de color con umbral reducido...")
-                combined = color_mask.copy()
-            
-            return combined
+            return None
             
         except Exception as e:
             print(f"Error combinando máscaras: {e}")
             return None
+
+    def _simple_fallback(self, image):
+        """Simple fallback using basic color thresholding."""
+        h, w = image.shape[:2]
+        print("Generando máscara de emergencia simple...")
+        
+        hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+        
+        # Very basic saturation thresholding
+        _, saturation, _ = cv2.split(hsv)
+        sat_thresh = cv2.threshold(saturation, 50, 255, cv2.THRESH_BINARY)[1]
+        
+        # Basic morphological cleaning
+        kernel = np.ones((5, 5), np.uint8)
+        cleaned = cv2.morphologyEx(sat_thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, kernel, iterations=1)
+        
+        # Create result mask
+        result_mask = np.ones((h, w), dtype=np.uint8) * 255
+        result_mask[cleaned > 0] = 0
+        
+        return result_mask
 
     def _final_cleanup(self, mask):
         """Apply final morphological operations for clean results."""
         if mask is None:
             return None
             
-        # Remove small noise
+        # Light cleaning only
         kernel_small = np.ones((3, 3), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_small)
         
-        # Fill small holes
-        kernel_medium = np.ones((5, 5), np.uint8)
+        # Light hole filling
+        kernel_medium = np.ones((4, 4), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_medium)
-        
-        # Final smoothing
-        mask = cv2.medianBlur(mask, 3)
         
         return mask
 
@@ -395,29 +408,6 @@ class FastObjectDetector:
             cv2.fillPoly(cleared_mask, [pts], 255)
         
         return cleared_mask
-
-    def _generate_emergency_fallback(self, image):
-        """Generate a simple fallback mask when all methods fail."""
-        h, w = image.shape[:2]
-        
-        # Convert to HSV and look for high saturation areas (colored objects)
-        hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
-        _, saturation, _ = cv2.split(hsv)
-        
-        # Threshold on saturation to find colored areas
-        _, sat_thresh = cv2.threshold(saturation, 60, 255, cv2.THRESH_BINARY)
-        
-        # Clean up
-        kernel = np.ones((5, 5), np.uint8)
-        sat_thresh = cv2.morphologyEx(sat_thresh, cv2.MORPH_CLOSE, kernel)
-        sat_thresh = cv2.morphologyEx(sat_thresh, cv2.MORPH_OPEN, kernel)
-        
-        # Create result mask
-        result_mask = np.ones((h, w), dtype=np.uint8) * 255
-        result_mask[sat_thresh > 0] = 0
-        
-        print("Usando máscara de emergencia basada en saturación.")
-        return result_mask
 
     def cleanup(self):
         """Clean up resources."""

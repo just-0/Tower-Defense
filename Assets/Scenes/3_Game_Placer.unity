@@ -1765,6 +1765,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e1c65db8f7dc8784785ba6fde56f9bd1, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  cursorScale: 0.6
+  rangeIndicatorSegments: 50
   cameraDisplay: {fileID: 1898768018}
   maskDisplay: {fileID: 425810401}
   gridCursor: {fileID: 844453756}
@@ -1774,6 +1776,7 @@ MonoBehaviour:
   monsterManager: {fileID: 752914491}
   mainWebSocketClient: {fileID: 1317562144}
   turretManager: {fileID: 542006577}
+  towerPrefab: {fileID: 187918, guid: 77a599bd67f72e24999e1d5d60f433d0, type: 3}
   connectionTimeout: 5
 --- !u!4 &1258561784
 Transform:

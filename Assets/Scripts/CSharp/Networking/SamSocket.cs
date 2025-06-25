@@ -63,6 +63,9 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
     [SerializeField] private MonsterManager monsterManager; // Referencia al MonsterManager para las oleadas de monstruos
     [SerializeField] private MainWebSocketClient mainWebSocketClient; // Referencia al nuevo cliente WebSocket
     [SerializeField] private TurretManager turretManager;
+    
+    [Header("Torre del ArUco")]
+    [SerializeField] private GameObject towerPrefab; // Prefab de la torre que se coloca en la posición del ArUco
     private PhotonManager photonManager; // Referencia al gestor de Photon
     
     private Texture2D cameraTexture;
@@ -72,6 +75,8 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
     private bool processingFrame = false;
     private bool inCombatMode = false;
     private bool combatModeJustStarted = false; // Para detectar el primer frame de combate
+    private float processingStartTime = 0f; // Para timeout de seguridad
+    private const float PROCESSING_TIMEOUT = 30f; // 30 segundos de timeout
     // private string serverUrl = "ws://localhost:8767"; // Eliminado, MainWebSocketClient lo maneja
     private List<Vector3> storedWorldPath; // Para almacenar el path hasta que se inicie combate
     private List<GameObject> pathSpheres = new List<GameObject>();
@@ -93,6 +98,7 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
     private float cursorSmoothSpeed = 20f;
     private bool debugSpheresCreated = false; // Para crear las esferas de debug solo una vez
     private bool isCursorVisible = false;
+    private GameObject currentTower; // Referencia a la torre actualmente colocada
 
     private float serverCameraWidth = 640f;  // Will be updated dynamically
     private float serverCameraHeight = 480f; // Will be updated dynamically
@@ -112,6 +118,7 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         if (validPositionMaterial == null) Debug.LogError("¡validPositionMaterial no está asignado en el Inspector!");
         if (invalidPositionMaterial == null) Debug.LogError("¡invalidPositionMaterial no está asignado en el Inspector!");
         if (mainWebSocketClient == null) Debug.LogError("¡mainWebSocketClient no está asignado en el Inspector!");
+        if (towerPrefab == null) Debug.LogError("¡towerPrefab no está asignado en el Inspector!");
         
         cameraTexture = new Texture2D(1, 1);
         maskTexture = new Texture2D(1, 1);
@@ -202,6 +209,7 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         processingFrame = false;
         if (cameraDisplay != null) cameraDisplay.enabled = true;
         if (maskDisplay != null) maskDisplay.enabled = false;
+        Debug.Log("SAMSystemController: Procesamiento completado, listo para nuevas solicitudes.");
     }
 
     private void HandleSamMaskMessage(byte[] messageData)
@@ -224,6 +232,12 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             }
         } catch (Exception e) {
             Debug.LogError($"Error al cargar máscara: {e.Message}");
+            // En caso de error, resetear el procesamiento
+            processingFrame = false;
+            if (LoadingManager.Instance != null)
+            {
+                LoadingManager.Instance.Hide();
+            }
         }
     }
 
@@ -237,7 +251,14 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             if (pathPoints != null && pathPoints.Length > 0) 
             {
                 DrawPath(pathPoints); // La lógica de DrawPath se mantiene
+                
+                // Colocar la torre en el último punto del path (posición del ArUco)
+                PlaceTowerAtDestination(pathPoints);
             }
+            
+            // IMPORTANTE: Marcar que el procesamiento ha terminado
+            processingFrame = false;
+            Debug.Log("SAMSystemController: Path recibido, procesamiento SAM completado.");
             
             if (gestureReceiver != null)
             {
@@ -259,6 +280,8 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         catch (Exception e) 
         {
             Debug.LogError($"JSON parsing error en PathPoints: {e.Message}");
+            // IMPORTANTE: También resetear en caso de error
+            processingFrame = false;
             // Si hay un error, también ocultamos la pantalla para no bloquear al jugador
             if (LoadingManager.Instance != null)
             {
@@ -649,6 +672,17 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             }
         }
 
+        // Verificar timeout de procesamiento para resetear automáticamente
+        if (processingFrame && Time.time - processingStartTime > PROCESSING_TIMEOUT)
+        {
+            Debug.LogWarning($"SAMSystemController: Timeout de procesamiento ({PROCESSING_TIMEOUT}s). Reseteando estado.");
+            processingFrame = false;
+            if (LoadingManager.Instance != null)
+            {
+                LoadingManager.Instance.Hide();
+            }
+        }
+
         // Comprobar mainWebSocketClient.IsConnected en lugar de isConnected
         if (Input.GetKeyDown(KeyCode.Space) && mainWebSocketClient != null && mainWebSocketClient.IsConnected && !processingFrame)
         {
@@ -684,6 +718,16 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
                 return;
             }
             processingFrame = true;
+            processingStartTime = Time.time; // Iniciar timer de timeout
+            
+            // Limpiar la torre anterior al iniciar un nuevo procesamiento
+            if (currentTower != null)
+            {
+                Debug.Log("Removiendo torre anterior al iniciar nuevo procesamiento SAM.");
+                Destroy(currentTower);
+                currentTower = null;
+            }
+            
             if (LoadingManager.Instance != null)
             {
                 LoadingManager.Instance.Show("Procesando el escenario...", true);
@@ -818,5 +862,45 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         {
             timeSinceLastGridPosition = 0f;
         }
+    }
+
+    private void PlaceTowerAtDestination(Vector2Serializable[] pathPoints)
+    {
+        if (towerPrefab == null || pathPoints == null || pathPoints.Length == 0)
+        {
+            Debug.LogError("No se puede colocar la torre: towerPrefab es null o no hay puntos en el path.");
+            return;
+        }
+
+        // Obtener el último punto del path (destino/ArUco)
+        Vector2Serializable lastPoint = pathPoints[pathPoints.Length - 1];
+        
+        // Convertir a coordenadas del mundo
+        Vector3 towerWorldPosition = ConvertGridToWorld(lastPoint.x, lastPoint.y);
+        
+        // Ajustar la posición Z para que la torre esté en el suelo
+        towerWorldPosition.z = 0f;
+        
+        // Remover la torre anterior si existe
+        if (currentTower != null)
+        {
+            Debug.Log("Removiendo torre anterior antes de colocar la nueva.");
+            Destroy(currentTower);
+        }
+        
+        // Instanciar la nueva torre
+        currentTower = Instantiate(towerPrefab, towerWorldPosition, Quaternion.identity);
+        
+        // Aplicar la rotación específica para que se vea bien con la cámara
+        // Usamos 65f en lugar de 115f porque Unity normaliza 115° a 65° automáticamente
+        currentTower.transform.rotation = Quaternion.Euler(65f, 180f, 0f);
+        
+        // Debug: Verificar la rotación real aplicada
+        Vector3 actualRotation = currentTower.transform.rotation.eulerAngles;
+        Debug.Log($"Torre colocada en posición del ArUco: {towerWorldPosition} (Grid: {lastPoint.x}, {lastPoint.y})");
+        Debug.Log($"Rotación aplicada: ({actualRotation.x:F1}°, {actualRotation.y:F1}°, {actualRotation.z:F1}°)");
+        
+        // Opcional: Agregar efectos visuales o sonidos aquí
+        // Por ejemplo, un efecto de partículas al colocar la torre
     }
 } 
