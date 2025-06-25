@@ -13,13 +13,10 @@ from utils.image_processings import encode_frame_to_jpeg
 from config.settings import (
     WEBSOCKET_HOST, FINGER_TRACKING_PORT, TRANSMISSION_FPS,
     MESSAGE_TYPE_CAMERA_FRAME, MESSAGE_TYPE_FINGER_COUNT, FINGER_CAMERA_INDEX,
-    FINGER_CAMERA_WIDTH, FINGER_CAMERA_HEIGHT, FINGER_CAMERA_FPS,
+    FINGER_CAMERA_WIDTH_PREFERRED, FINGER_CAMERA_HEIGHT_PREFERRED, FINGER_CAMERA_FPS,
     FINGER_TRANSMISSION_FPS, MENU_GESTURE_PORT, MESSAGE_TYPE_SERVER_STATUS,
-    MESSAGE_TYPE_SWITCH_CAMERA, MESSAGE_TYPE_CAMERA_LIST
+    MESSAGE_TYPE_SWITCH_CAMERA, MESSAGE_TYPE_CAMERA_LIST, MESSAGE_TYPE_CAMERA_INFO
 )
-
-# Define a new message type for sending camera resolution info
-MESSAGE_TYPE_CAMERA_INFO = 12
 
 class GestureServer:
     """
@@ -33,8 +30,8 @@ class GestureServer:
         self.camera_ready = False
         self.finger_counter = FingerCounter(
             camera_index=None,
-            width=FINGER_CAMERA_WIDTH,
-            height=FINGER_CAMERA_HEIGHT,
+            width=FINGER_CAMERA_WIDTH_PREFERRED,
+            height=FINGER_CAMERA_HEIGHT_PREFERRED,
             fps=FINGER_CAMERA_FPS
         )
         

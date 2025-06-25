@@ -5,16 +5,13 @@ WebSocket server for real-time communication.
 import asyncio
 import websockets
 import json
-import threading
-import cv2
 import time
-import numpy as np
-import queue
+import cv2
 
 from utils.camera import CameraManager
 from utils.image_processings import encode_frame_to_jpeg
 from utils.finger_tracking import FingerCounter
-from models.sam_model import SAMProcessor 
+from models.sam_model import FastObjectDetector as SAMProcessor 
 from utils.pathfinding import handle_astar_from_mask
 from models.finger_pointer import GridSystem, FingerPositionDetector
 from models.aruco import ArucoDetector
@@ -22,9 +19,9 @@ from models.aruco import ArucoDetector
 from config.settings import (
     WEBSOCKET_HOST, WEBSOCKET_PORT, FINGER_TRACKING_PORT, TRANSMISSION_FPS,
     MESSAGE_TYPE_CAMERA_FRAME, MESSAGE_TYPE_MASK, MESSAGE_TYPE_PATH, 
-    MESSAGE_TYPE_FINGER_COUNT, FINGER_CAMERA_INDEX, FINGER_CAMERA_WIDTH,
-    FINGER_CAMERA_HEIGHT, FINGER_CAMERA_FPS, FINGER_TRANSMISSION_FPS,
-    MESSAGE_TYPE_GRID_POSITION, CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT,
+    MESSAGE_TYPE_FINGER_COUNT, FINGER_CAMERA_INDEX, FINGER_CAMERA_WIDTH_PREFERRED,
+    FINGER_CAMERA_HEIGHT_PREFERRED, FINGER_CAMERA_FPS, FINGER_TRANSMISSION_FPS,
+    MESSAGE_TYPE_GRID_POSITION, CAMERA_INDEX, CAMERA_WIDTH_PREFERRED, CAMERA_HEIGHT_PREFERRED,
     CAMERA_FPS, MESSAGE_TYPE_GRID_CONFIRMATION, MESSAGE_TYPE_PROGRESS_UPDATE
 )
 
@@ -39,8 +36,8 @@ class WebSocketServer:
         self.finger_server = None
         self.finger_counter = FingerCounter(
             camera_index=FINGER_CAMERA_INDEX,
-            width=FINGER_CAMERA_WIDTH,
-            height=FINGER_CAMERA_HEIGHT,
+            width=FINGER_CAMERA_WIDTH_PREFERRED,
+            height=FINGER_CAMERA_HEIGHT_PREFERRED,
             fps=FINGER_CAMERA_FPS
         )
         
@@ -208,10 +205,22 @@ class WebSocketServer:
                         
                         combat_mode_active = True
                         
-                        # Initialize grid system and finger detector
+                        # Initialize grid system and finger detector with actual camera resolution
                         if grid_system is None:
-                            grid_system = GridSystem(CAMERA_WIDTH, CAMERA_HEIGHT)
+                            # Use camera manager to get actual resolution
+                            temp_camera = CameraManager(
+                                camera_index=CAMERA_INDEX, 
+                                width=CAMERA_WIDTH_PREFERRED, 
+                                height=CAMERA_HEIGHT_PREFERRED, 
+                                fps=CAMERA_FPS
+                            )
+                            temp_camera.start_camera()
+                            actual_width, actual_height = temp_camera.get_resolution()
+                            temp_camera.stop_camera()
+                            
+                            grid_system = GridSystem(actual_width, actual_height)
                             finger_detector = FingerPositionDetector(grid_system)
+                            print(f"Grid system initialized with resolution: {actual_width}x{actual_height}")
                         
                         # Start combat mode task
                         if combat_task is None or combat_task.done():
@@ -326,159 +335,40 @@ class WebSocketServer:
             print("Camera frame sending stopped")
             
     async def handle_combat_mode(self, websocket, finger_detector):
-        """Handle the combat mode with finger detection."""
-        cap = None
+        """Handle the combat mode with enhanced camera management."""
         try:
-            print(f"INFO: Iniciando modo combate, abriendo cámara con índice {CAMERA_INDEX}")
-            # Abrir cámara para modo combate y probar opciones avanzadas para mayor rendimiento
-            cap = cv2.VideoCapture(CAMERA_INDEX)
+            print(f"INFO: Iniciando modo combate con cámara {CAMERA_INDEX}")
+            # Use enhanced camera manager for combat mode
+            combat_camera = CameraManager(
+                camera_index=CAMERA_INDEX, 
+                width=CAMERA_WIDTH_PREFERRED, 
+                height=CAMERA_HEIGHT_PREFERRED, 
+                fps=CAMERA_FPS
+            )
             
-            # Intentar configurar el backend para mejor rendimiento
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))  # Usar MJPG para mayor velocidad
+            if not combat_camera.start_camera():
+                print(f"ERROR: No se pudo iniciar la cámara {CAMERA_INDEX}")
+                return
             
-            # Verificar si la cámara está abierta
-            if not cap.isOpened():
-                print(f"ERROR: No se pudo abrir la cámara {CAMERA_INDEX}")
-                for test_index in range(3):
-                    if test_index == CAMERA_INDEX:
-                        continue
-                    print(f"INFO: Intentando con cámara alternativa {test_index}")
-                    cap = cv2.VideoCapture(test_index)
-                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-                    if cap.isOpened():
-                        print(f"INFO: Cámara {test_index} abierta con éxito")
-                        break
-                
-                if not cap.isOpened():
-                    print("ERROR: No se pudo abrir ninguna cámara")
-                    return
-                
-            # Configurar la cámara con resolución óptima para equilibrar rendimiento y detección
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-            cap.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
-            
-            # Verificar configuración real de la cámara
-            actual_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-            actual_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-            actual_fps = cap.get(cv2.CAP_PROP_FPS)
-            
+            # Get actual resolution
+            actual_width, actual_height = combat_camera.get_resolution()
+            actual_fps = combat_camera.get_fps()
             print(f"INFO: Modo combate iniciado con cámara configurada a {actual_width}x{actual_height} @ {actual_fps}fps")
             
-            # Utilizar una cola thread-safe en lugar de un lock y un buffer
-            frame_queue = queue.Queue(maxsize=2)  # Limitar a 2 frames para evitar acumulación
-            stop_event = threading.Event()
-            
-            # Precalentar la cámara para evitar delays iniciales
-            for _ in range(5):
-                cap.read()
-                
-            # Función para capturar frames en un hilo separado sin usar asyncio
-            def capture_frames():
-                try:
-                    local_cap = cap  # Crear una referencia local
-                    retry_count = 0
-                    
-                    while not stop_event.is_set():
-                        try:
-                            if local_cap is None or not local_cap.isOpened():
-                                # Si la cámara no está abierta, intentar reiniciar
-                                if local_cap is not None:
-                                    local_cap.release()
-                                local_cap = cv2.VideoCapture(CAMERA_INDEX)
-                                local_cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-                                local_cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
-                                local_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-                                local_cap.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
-                                
-                                if not local_cap.isOpened():
-                                    print("ERROR: No se pudo abrir la cámara, reintentando...")
-                                    time.sleep(1.0)
-                                    continue
-                            
-                            ret, frame = local_cap.read()
-                            
-                            if not ret:
-                                retry_count += 1
-                                if retry_count >= 5:
-                                    print("ERROR: Fallo de cámara, reiniciando...")
-                                    time.sleep(0.5)
-                                    # Reiniciar la cámara
-                                    if local_cap.isOpened():
-                                        local_cap.release()
-                                    local_cap = cv2.VideoCapture(CAMERA_INDEX)
-                                    local_cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-                                    local_cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
-                                    local_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-                                    local_cap.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
-                                    retry_count = 0
-                                time.sleep(0.1)
-                                continue
-                            
-                            retry_count = 0
-                            
-                            # Verificar frame válido
-                            if frame is None or frame.size == 0 or frame.shape[0] <= 0 or frame.shape[1] <= 0 or frame.shape[2] != 3:
-                                continue
-                            
-                            # Poner el frame en la cola, reemplazando el anterior si está llena
-                            try:
-                                # Si la cola está llena, eliminar el frame más antiguo
-                                if frame_queue.full():
-                                    try:
-                                        frame_queue.get_nowait()
-                                    except queue.Empty:
-                                        pass
-                                
-                                # Poner el nuevo frame en la cola
-                                frame_queue.put(frame, block=False)
-                            except queue.Full:
-                                # Si aún así no se puede poner, simplemente continuar
-                                pass
-                            
-                            # Control de velocidad para no saturar
-                            time.sleep(1.0 / (CAMERA_FPS * 1.2))
-                        
-                        except Exception as e:
-                            print(f"ERROR: Error en captura: {str(e)}")
-                            import traceback
-                            traceback.print_exc()
-                            time.sleep(0.5)
-                            
-                except Exception as e:
-                    print(f"ERROR: Captura general: {str(e)}")
-                    import traceback
-                    traceback.print_exc()
-                finally:
-                    # Asegurar que la cámara se libere si hay error
-                    try:
-                        if local_cap is not None and local_cap.isOpened():
-                            local_cap.release()
-                    except:
-                        pass
-            
-            # Iniciar thread de captura
-            capture_thread = threading.Thread(target=capture_frames, daemon=True)
-            capture_thread.start()
-            
-            # Bucle principal para procesar frames en el hilo de asyncio
+            # Bucle principal para procesar frames - mucho más simple con CameraManager
             frame_count = 0
             total_frames = 0
             last_fps_time = time.time()
             last_position_send_time = 0
             grid_position_cache = None
             
-            while not stop_event.is_set():
+            while True:
                 current_time = time.time()
                 
-                # Intentar obtener un frame de la cola
-                frame = None
-                try:
-                    # Usar una espera corta para reducir CPU
-                    frame = frame_queue.get(block=True, timeout=0.01)
-                except queue.Empty:
-                    # Si no hay frame disponible, esperar un poco y reintentar
-                    await asyncio.sleep(0.005)  # Espera muy corta para ser responsivo
+                # Get frame from camera manager (already in RGB format)
+                frame = combat_camera.get_current_frame()
+                if frame is None:
+                    await asyncio.sleep(0.01)
                     continue
                 
                 # Incrementar contador total de frames
@@ -491,9 +381,8 @@ class WebSocketServer:
                 
                 # Procesar el frame
                 try:
-                    # Procesamiento básico para detección de manos
-                    adjusted_frame = cv2.convertScaleAbs(frame, alpha=1.2, beta=10)
-                    frame_rgb = cv2.cvtColor(adjusted_frame, cv2.COLOR_BGR2RGB)
+                    # Procesamiento básico para detección de manos (frame ya está en RGB)
+                    frame_rgb = cv2.convertScaleAbs(frame, alpha=1.2, beta=10)
                     
                     # Procesar frame para detección de dedos
                     output_image, current_position, is_confirmed, selected_cell = finger_detector.process_frame(frame_rgb)
@@ -580,11 +469,8 @@ class WebSocketServer:
         finally:
             # Limpiar recursos
             try:
-                if 'stop_event' in locals():
-                    stop_event.set()
-                
-                if cap is not None and cap.isOpened():
-                    cap.release()
+                if 'combat_camera' in locals():
+                    combat_camera.stop_camera()
                 
                 print("INFO: Recursos de modo combate liberados")
             except Exception as e:

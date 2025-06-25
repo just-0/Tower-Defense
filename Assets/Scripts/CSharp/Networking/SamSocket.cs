@@ -94,8 +94,8 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
     private bool debugSpheresCreated = false; // Para crear las esferas de debug solo una vez
     private bool isCursorVisible = false;
 
-    private float serverCameraWidth = 640f;
-    private float serverCameraHeight = 480f;
+    private float serverCameraWidth = 640f;  // Will be updated dynamically
+    private float serverCameraHeight = 480f; // Will be updated dynamically
 
     private float timeSinceLastGridPosition = 0f;
     private const float gridPositionTimeout = 0.3f;
@@ -276,9 +276,20 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             
             if (info.width > 0 && info.height > 0)
             {
+                float previousWidth = serverCameraWidth;
+                float previousHeight = serverCameraHeight;
+                
                 serverCameraWidth = info.width;
                 serverCameraHeight = info.height;
-                Debug.Log($"[SAMSystemController] Recibida y actualizada la resolución de la cámara del servidor: {serverCameraWidth}x{serverCameraHeight}");
+                
+                Debug.Log($"[SAMSystemController] Resolución de cámara actualizada: {previousWidth}x{previousHeight} -> {serverCameraWidth}x{serverCameraHeight}");
+                
+                // Si las dimensiones cambiaron significativamente, limpiar el path existente
+                if (Mathf.Abs(previousWidth - serverCameraWidth) > 10 || Mathf.Abs(previousHeight - serverCameraHeight) > 10)
+                {
+                    Debug.Log("[SAMSystemController] Resolución cambió significativamente, limpiando path anterior.");
+                    ClearPathSpheres();
+                }
             }
         }
         catch (Exception e)
@@ -337,7 +348,7 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         }
 
     private Vector3 ConvertGridToWorld(float gridX, float gridY)
-        {
+    {
         if (Camera.main == null) {
             Debug.LogError("ConvertGridToWorld: Camera.main es nula.");
             return Vector3.zero;
@@ -345,15 +356,15 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
 
         float orthoHeight = Camera.main.orthographicSize;
         float orthoWidth = orthoHeight * Camera.main.aspect;
-        float originalWidth = serverCameraWidth;
-        float originalHeight = serverCameraHeight;
+        float originalWidth = serverCameraWidth;   // Uses dynamically updated resolution
+        float originalHeight = serverCameraHeight; // Uses dynamically updated resolution
         float scaleX = (orthoWidth * 2f) / originalWidth;
         float scaleY = (orthoHeight * 2f) / originalHeight;
 
         float worldX = (gridX - originalWidth / 2f) * scaleX;
         float worldY = -(gridY - originalHeight / 2f) * scaleY;
 
-        // La posición Z puede necesitar ajuste dependiendo de tu configuración de cámara
+        Debug.Log($"[ConvertGridToWorld] Grid({gridX}, {gridY}) -> World({worldX}, {worldY}) using resolution {originalWidth}x{originalHeight}");
         return new Vector3(worldX, worldY, 0); 
     }
 
@@ -388,12 +399,14 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         }
         float orthoHeight = Camera.main.orthographicSize;
         float orthoWidth = orthoHeight * Camera.main.aspect;
-        float originalWidth = serverCameraWidth;
-        float originalHeight = serverCameraHeight;
+        float originalWidth = serverCameraWidth;   // Uses dynamically updated resolution
+        float originalHeight = serverCameraHeight; // Uses dynamically updated resolution
         float scaleX = (orthoWidth * 2f) / originalWidth;
         float scaleY = (orthoHeight * 2f) / originalHeight;
         float zPos = -5f;
-        int step = 15; 
+        int step = 15;
+        
+        Debug.Log($"[DrawPathSpheres] Drawing path using resolution {originalWidth}x{originalHeight}"); 
 
         for (int i = 0; i < pathPoints.Length; i += step)
         {
@@ -420,11 +433,13 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         }
         float orthoHeight = Camera.main.orthographicSize;
         float orthoWidth = orthoHeight * Camera.main.aspect;
-        float originalWidth = serverCameraWidth;
-        float originalHeight = serverCameraHeight;
+        float originalWidth = serverCameraWidth;   // Uses dynamically updated resolution
+        float originalHeight = serverCameraHeight; // Uses dynamically updated resolution
         float scaleX = (orthoWidth * 2f) / originalWidth;
         float scaleY = (orthoHeight * 2f) / originalHeight;
         float zPos = -3f;
+        
+        Debug.Log($"[ConvertPathToWorldCoordinates] Converting path using resolution {originalWidth}x{originalHeight}");
         
         foreach (var point in pathPoints)
         {
@@ -524,8 +539,8 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
 
         float orthoHeight = Camera.main.orthographicSize;
         float orthoWidth = orthoHeight * Camera.main.aspect;
-        float originalWidth = serverCameraWidth;
-        float originalHeight = serverCameraHeight;
+        float originalWidth = serverCameraWidth;   // Uses dynamically updated resolution
+        float originalHeight = serverCameraHeight; // Uses dynamically updated resolution
         float scaleX = (orthoWidth * 2f) / originalWidth;
         float scaleY = (orthoHeight * 2f) / originalHeight;
 

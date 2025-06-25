@@ -10,16 +10,31 @@ MENU_GESTURE_PORT = 8766 # Port for the main menu gesture server
 
 # Camera settings for SAM
 CAMERA_INDEX = 1  # Index of the camera to use for SAM
-CAMERA_WIDTH = 640
-CAMERA_HEIGHT = 480
+# Preferred resolution - the system will try to set this but will adapt to actual camera capabilities
+CAMERA_WIDTH_PREFERRED = 640
+CAMERA_HEIGHT_PREFERRED = 480
 CAMERA_FPS = 30
 
 # Camera settings for finger tracking
 FINGER_CAMERA_INDEX = 0  # Index of the camera to use for finger tracking
-FINGER_CAMERA_WIDTH = 640
-FINGER_CAMERA_HEIGHT = 480
+# Preferred resolution for finger tracking
+FINGER_CAMERA_WIDTH_PREFERRED = 640
+FINGER_CAMERA_HEIGHT_PREFERRED = 480
 FINGER_CAMERA_FPS = 30
 FINGER_TRANSMISSION_FPS = 10  # How often to send finger count updates
+
+# Auto-detection settings
+AUTO_DETECT_CAMERA_RESOLUTION = True  # Automatically detect and use actual camera resolution
+MAX_RESOLUTION_WIDTH = 1280  # Maximum width to prevent performance issues
+MAX_RESOLUTION_HEIGHT = 720  # Maximum height to prevent performance issues
+MIN_RESOLUTION_WIDTH = 320   # Minimum width for proper detection
+MIN_RESOLUTION_HEIGHT = 240  # Minimum height for proper detection
+
+# Legacy compatibility (will be overridden by actual detection)
+CAMERA_WIDTH = CAMERA_WIDTH_PREFERRED
+CAMERA_HEIGHT = CAMERA_HEIGHT_PREFERRED
+FINGER_CAMERA_WIDTH = FINGER_CAMERA_WIDTH_PREFERRED
+FINGER_CAMERA_HEIGHT = FINGER_CAMERA_HEIGHT_PREFERRED
 
 # Frame transmission settings
 TRANSMISSION_FPS = 15
@@ -53,6 +68,7 @@ MESSAGE_TYPE_SERVER_STATUS = 8 # New message for server status (e.g., camera rea
 MESSAGE_TYPE_SWITCH_CAMERA = 9 # New message to request a camera switch
 MESSAGE_TYPE_CAMERA_LIST = 10 # New message to send the list of available cameras
 MESSAGE_TYPE_PROGRESS_UPDATE = 11 # For sending progress updates during long tasks
+MESSAGE_TYPE_CAMERA_INFO = 12 # For sending camera resolution info
 
 # Mask validation settings
 MIN_BLACK_RATIO = 0.05

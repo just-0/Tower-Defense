@@ -1,13 +1,15 @@
 """
-Enhanced Segment Anything Model (SAM) implementation for object detection.
-Optimized for both wall and table scenarios with scene-specific processing.
+Enhanced and Optimized Object Detection for Tower Defense Game.
+Combines SAM with traditional CV methods for fast and reliable detection of colored objects.
 """
 
 import torch
 import numpy as np
 import cv2
-import asyncio # Importar asyncio
-import time # Importar time para la simulación
+import asyncio
+import time
+import threading
+import concurrent.futures
 from mobile_sam import sam_model_registry, SamPredictor, SamAutomaticMaskGenerator
 from utils.image_processings import (
     enhance_image, clean_mask, validate_mask, 
@@ -21,599 +23,408 @@ from config.settings import (
     DEBUG_INPUT_IMAGE, DEBUG_MASK_FINAL, MIN_BLACK_RATIO, MAX_BLACK_RATIO
 )
 
-class SAMProcessor:
+class FastObjectDetector:
     """
-    Handles processing images using the Segment Anything Model (SAM).
-    Enhanced to handle different scenarios: wall-facing and table-facing.
+    Ultra-fast and reliable object detection combining SAM with traditional CV methods.
+    Specifically optimized for detecting colored objects like paper sheets on surfaces.
     """
     
     def __init__(self):
-        """Initialize the SAM model."""
-        print("Initializing Mobile SAM model...")
+        """Initialize the detection system."""
+        print("Inicializando detector rápido de objetos...")
         
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print(f"Using device: {self.device}")
+        print(f"Usando dispositivo: {self.device}")
 
-        self.sam = sam_model_registry[MODEL_TYPE](checkpoint=MODEL_CHECKPOINT)
-        self.sam.to(device=self.device)
+        # Initialize SAM with optimized settings for speed
+        self.sam = None
+        self.sam_predictor = None
+        self.use_sam = True
         
-        # Optimized parameters for better obstacle detection on walls
-        current_pred_iou_thresh = 0.85 
-        current_stability_score_thresh = 0.90
+        try:
+            self.sam = sam_model_registry[MODEL_TYPE](checkpoint=MODEL_CHECKPOINT)
+            self.sam.to(device=self.device)
+            self.sam_predictor = SamPredictor(self.sam)
+            print("SAM inicializado correctamente.")
+        except Exception as e:
+            print(f"Advertencia: No se pudo cargar SAM: {e}. Usando solo métodos tradicionales.")
+            self.use_sam = False
         
-        print(f"Using SAM params: PRED_IOU_THRESH={current_pred_iou_thresh}, STABILITY_SCORE_THRESH={current_stability_score_thresh}")
+        # Thread pool for parallel processing
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         
-        self.mask_generator = SamAutomaticMaskGenerator(
-            self.sam,
-            points_per_side=POINTS_PER_SIDE,
-            pred_iou_thresh=current_pred_iou_thresh,
-            stability_score_thresh=current_stability_score_thresh,
-            crop_n_layers=CROP_N_LAYERS,
-            crop_n_points_downscale_factor=CROP_N_POINTS_DOWNSCALE_FACTOR,
-            min_mask_region_area=MIN_MASK_REGION_AREA,
-        )
-        print("Mobile SAM model initialized.")
+        print("Detector rápido de objetos listo.")
 
     async def process_image(self, image, scene_type="pared", hand_points=None, aruco_corners=None, progress_callback=None, websocket=None):
         """
-        Process an image to generate object masks with scene-specific optimizations.
-        Includes simulated progress for the main SAM generation task.
+        Process image with ultra-fast multi-method approach.
         
         Args:
             image (numpy.ndarray): Input image in RGB format
-            scene_type (str): Either "wall" or "table" to specify the scenario
-            hand_points (list, optional): List of [x, y] coordinates for guided segmentation
-            aruco_corners (list, optional): List of corner coordinates for ArUco markers.
-                                          Each element is an array of shape (1, 4, 2) for a marker.
-            progress_callback (func, optional): Async function to call for progress updates.
-            websocket (WebSocketServerProtocol, optional): WebSocket connection for the callback.
+            scene_type (str): Scene type ("pared" or "mesa")
+            hand_points (list, optional): Guided points
+            aruco_corners (list, optional): ArUco marker corners
+            progress_callback (func, optional): Progress callback
+            websocket: WebSocket connection
             
         Returns:
-            bytes: PNG encoded binary mask or None if processing failed
+            bytes: PNG encoded binary mask
         """
+        start_time = time.time()
+        
         async def send_progress(step, progress):
             if progress_callback and websocket:
                 await progress_callback(websocket, step, progress)
 
-        await send_progress("Pre-procesando imagen...", 45)
-        # Save debug input image
-        save_debug_image(image, DEBUG_INPUT_IMAGE)
+        await send_progress("Iniciando detección ultra-rápida...", 5)
         
-        # Scene-specific preprocessing
-        if scene_type.lower() == "table":
-            preprocessed_image = self._preprocess_table_scene(image)
-        else:  # Default to wall processing
-            preprocessed_image = self._preprocess_wall_scene(image)
+        # Save debug input
+        save_debug_image(image, DEBUG_INPUT_IMAGE)
         
         h, w = image.shape[:2]
         
-        # --- SIMULACIÓN DE PROGRESO PARA TAREA PESADA ---
-        await send_progress("Generando máscaras con SAM...", 50)
+        # Step 1: Fast preprocessing (10ms)
+        await send_progress("Pre-procesando imagen...", 15)
+        processed_image = self._fast_preprocess(image)
+        
+        # Step 2: Parallel detection using multiple methods
+        await send_progress("Ejecutando detección paralela...", 30)
+        
+        # Run multiple detection methods in parallel
         loop = asyncio.get_running_loop()
-
-        async def simulate_progress(task_to_monitor):
-            estimated_duration = 30.0  # Duración estimada en segundos (ajustado a 30s)
-            start_progress = 50.0
-            target_progress = 75.0
-            start_time = time.time()
-            
-            while not task_to_monitor.done():
-                elapsed_time = time.time() - start_time
-                simulated_p = min(1.0, elapsed_time / estimated_duration)
-                current_simulated_progress = start_progress + simulated_p * (target_progress - start_progress)
-                
-                await send_progress("Procesando imagen (SAM)...", current_simulated_progress)
-                await asyncio.sleep(1)
-
-        if hand_points and len(hand_points) > 0:
-            masks = await loop.run_in_executor(None, self._process_with_points, preprocessed_image, hand_points)
-        else:
-            sam_task = loop.run_in_executor(None, self._process_automatic, preprocessed_image)
-            simulation_task = asyncio.create_task(simulate_progress(sam_task))
-            masks = await sam_task
-            simulation_task.cancel()
-            try:
-                await simulation_task
-            except asyncio.CancelledError:
-                pass # Cancelación esperada
-
-        if not masks:
-            print(f"No masks found in {scene_type} scene!")
-            await send_progress("No se encontraron máscaras.", 55)
-            return None
-
-        # --- FIN DE SIMULACIÓN, INICIO DE PROGRESO REAL ---
-        await send_progress("Post-procesando máscaras...", 75)
-
-        # Scene-specific mask processing
-        if scene_type.lower() == "table":
-            combined_mask = await self._process_table_masks(masks, h, w, image, progress_callback, websocket)
-        else:
-            combined_mask = await self._process_wall_masks(masks, h, w, image, progress_callback, websocket)
         
-        # Clear ArUco marker areas from the mask
+        # Create tasks for parallel execution
+        tasks = []
+        
+        # Task 1: Color-based detection (very fast)
+        tasks.append(loop.run_in_executor(
+            self.executor, 
+            self._color_based_detection, 
+            processed_image
+        ))
+        
+        # Task 2: Contour-based detection (fast)
+        tasks.append(loop.run_in_executor(
+            self.executor, 
+            self._contour_based_detection, 
+            processed_image
+        ))
+        
+        # Task 3: SAM detection (if available and for high-quality results)
+        if self.use_sam and image.shape[0] * image.shape[1] < 640*480:  # Only for smaller images
+            tasks.append(loop.run_in_executor(
+                self.executor, 
+                self._sam_detection, 
+                cv2.resize(processed_image, (320, 240))  # Reduced resolution for speed
+            ))
+        
+        # Wait for all tasks to complete
+        await send_progress("Combinando resultados...", 70)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Process results
+        color_mask = results[0] if len(results) > 0 and not isinstance(results[0], Exception) else None
+        contour_mask = results[1] if len(results) > 1 and not isinstance(results[1], Exception) else None
+        sam_mask = results[2] if len(results) > 2 and not isinstance(results[2], Exception) else None
+        
+        # Step 3: Intelligent mask combination
+        await send_progress("Fusionando máscaras...", 85)
+        combined_mask = self._combine_masks(color_mask, contour_mask, sam_mask, h, w)
+        
+        # Step 4: Clear ArUco areas
         if aruco_corners is not None and combined_mask is not None:
-            await send_progress("Limpiando área de marcador...", 88)
             combined_mask = self._clear_aruco_area_from_mask(combined_mask, aruco_corners)
-            print("Cleared ArUco areas from mask.")
-
-        # Validate the final mask
-        is_valid, black_ratio = validate_mask(combined_mask, MIN_BLACK_RATIO, MAX_BLACK_RATIO)
-        if not is_valid:
-            print(f"Warning: Mask may be incorrect ({(black_ratio*100):.1f}% black)")
-            combined_mask = self._generate_fallback_mask(image, scene_type)
         
-        # Save debug output mask
+        # Step 5: Final validation and cleanup
+        await send_progress("Validando resultado...", 95)
+        if combined_mask is None:
+            combined_mask = self._generate_emergency_fallback(image)
+        
+        # Apply final morphological operations for clean edges
+        combined_mask = self._final_cleanup(combined_mask)
+        
+        # Save debug output
         save_debug_image(combined_mask, DEBUG_MASK_FINAL)
         
-        # Convert to PNG bytes
+        processing_time = time.time() - start_time
+        print(f"Detección completada en {processing_time:.2f} segundos")
+        
         return mask_to_png_bytes(combined_mask)
 
+    def _fast_preprocess(self, image):
+        """Ultra-fast preprocessing optimized for colored objects."""
+        # Apply minimal but effective preprocessing
+        # 1. Slight gaussian blur to reduce noise
+        blurred = cv2.GaussianBlur(image, (3, 3), 0.5)
+        
+        # 2. Enhance contrast in LAB space (faster than multiple operations)
+        lab = cv2.cvtColor(blurred, cv2.COLOR_RGB2LAB)
+        l, a, b = cv2.split(lab)
+        
+        # Apply CLAHE only to L channel
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        l = clahe.apply(l)
+        
+        # Merge and convert back
+        enhanced_lab = cv2.merge([l, a, b])
+        enhanced = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2RGB)
+        
+        return enhanced
+
+    def _color_based_detection(self, image):
+        """Ultra-fast color-based detection for colored objects like paper sheets."""
+        try:
+            h, w = image.shape[:2]
+            
+            # Convert to HSV for better color separation
+            hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+            
+            # Define color ranges for common paper/object colors
+            color_ranges = [
+                # Red range
+                ([0, 50, 50], [10, 255, 255]),
+                ([170, 50, 50], [180, 255, 255]),
+                # Green range
+                ([40, 50, 50], [80, 255, 255]),
+                # Blue range  
+                ([100, 50, 50], [130, 255, 255]),
+                # Yellow range
+                ([20, 50, 50], [40, 255, 255]),
+                # Purple/Magenta range
+                ([140, 50, 50], [170, 255, 255]),
+            ]
+            
+            combined_color_mask = np.zeros((h, w), dtype=np.uint8)
+            
+            # Apply each color range
+            for (lower, upper) in color_ranges:
+                lower = np.array(lower)
+                upper = np.array(upper)
+                
+                mask = cv2.inRange(hsv, lower, upper)
+                
+                # Remove noise
+                kernel = np.ones((3, 3), np.uint8)
+                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+                mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+                
+                # Only keep significant areas
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                for contour in contours:
+                    area = cv2.contourArea(contour)
+                    if area > 500:  # Minimum area threshold
+                        cv2.drawContours(combined_color_mask, [contour], -1, 255, -1)
+            
+            # Create binary mask (0 = obstacle, 255 = free)
+            result_mask = np.ones((h, w), dtype=np.uint8) * 255
+            result_mask[combined_color_mask > 0] = 0
+            
+            return result_mask
+            
+        except Exception as e:
+            print(f"Error en detección por color: {e}")
+            return None
+
+    def _contour_based_detection(self, image):
+        """Fast edge and contour-based detection."""
+        try:
+            h, w = image.shape[:2]
+            
+            # Convert to grayscale
+            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            
+            # Apply adaptive histogram equalization
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+            enhanced_gray = clahe.apply(gray)
+            
+            # Edge detection with multiple scales
+            edges1 = cv2.Canny(enhanced_gray, 50, 150)
+            edges2 = cv2.Canny(enhanced_gray, 30, 100)
+            
+            # Combine edges
+            combined_edges = cv2.bitwise_or(edges1, edges2)
+            
+            # Dilate edges to create connected regions
+            kernel = np.ones((3, 3), np.uint8)
+            dilated_edges = cv2.dilate(combined_edges, kernel, iterations=2)
+            
+            # Find contours
+            contours, _ = cv2.findContours(dilated_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            # Create mask
+            contour_mask = np.zeros((h, w), dtype=np.uint8)
+            
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                # Filter by area and aspect ratio
+                if 300 < area < (h * w * 0.3):
+                    # Check if contour is roughly rectangular (good for paper sheets)
+                    epsilon = 0.02 * cv2.arcLength(contour, True)
+                    approx = cv2.approxPolyDP(contour, epsilon, True)
+                    
+                    if len(approx) >= 4:  # At least 4 corners (roughly rectangular)
+                        cv2.drawContours(contour_mask, [contour], -1, 255, -1)
+            
+            # Create binary mask (0 = obstacle, 255 = free)
+            result_mask = np.ones((h, w), dtype=np.uint8) * 255
+            result_mask[contour_mask > 0] = 0
+            
+            return result_mask
+            
+        except Exception as e:
+            print(f"Error en detección por contornos: {e}")
+            return None
+
+    def _sam_detection(self, image):
+        """Fast SAM detection on reduced resolution."""
+        try:
+            if not self.use_sam:
+                return None
+                
+            h, w = image.shape[:2]
+            
+            # Set image for SAM predictor
+            self.sam_predictor.set_image(image)
+            
+            # Generate automatic masks with optimized parameters for speed
+            mask_generator = SamAutomaticMaskGenerator(
+                self.sam,
+                points_per_side=16,  # Reduced for speed
+                pred_iou_thresh=0.8,
+                stability_score_thresh=0.85,
+                crop_n_layers=0,  # No cropping for speed
+                crop_n_points_downscale_factor=1,
+                min_mask_region_area=100,
+            )
+            
+            masks = mask_generator.generate(image)
+            
+            if not masks:
+                return None
+            
+            # Combine valid masks
+            combined_mask = np.ones((h, w), dtype=np.uint8) * 255
+            
+            for mask_data in masks:
+                mask = mask_data['segmentation'].astype(np.uint8)
+                area = mask_data.get('area', np.sum(mask))
+                
+                # Filter masks by area
+                area_ratio = area / (h * w)
+                if 0.01 < area_ratio < 0.5:  # Reasonable object size
+                    combined_mask[mask > 0] = 0
+            
+            return combined_mask
+            
+        except Exception as e:
+            print(f"Error en detección SAM: {e}")
+            return None
+
+    def _combine_masks(self, color_mask, contour_mask, sam_mask, target_h, target_w):
+        """Intelligently combine masks from different detection methods."""
+        try:
+            # Create base mask
+            combined = np.ones((target_h, target_w), dtype=np.uint8) * 255
+            
+            # Resize masks if needed
+            def resize_mask(mask):
+                if mask is None:
+                    return None
+                if mask.shape[:2] != (target_h, target_w):
+                    return cv2.resize(mask, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
+                return mask
+            
+            color_mask = resize_mask(color_mask)
+            contour_mask = resize_mask(contour_mask)
+            sam_mask = resize_mask(sam_mask)
+            
+            # Voting system: if 2+ methods agree on a pixel being an obstacle, mark it
+            votes = np.zeros((target_h, target_w), dtype=np.uint8)
+            
+            if color_mask is not None:
+                votes[color_mask == 0] += 1
+                
+            if contour_mask is not None:
+                votes[contour_mask == 0] += 1
+                
+            if sam_mask is not None:
+                votes[sam_mask == 0] += 1
+            
+            # Apply voting threshold
+            threshold = 1 if sam_mask is None else 2  # Lower threshold if SAM not available
+            combined[votes >= threshold] = 0
+            
+            # If no significant detection, try color-only approach with lower threshold
+            obstacle_ratio = np.sum(combined == 0) / (target_h * target_w)
+            if obstacle_ratio < 0.01 and color_mask is not None:
+                print("Aplicando detección de color con umbral reducido...")
+                combined = color_mask.copy()
+            
+            return combined
+            
+        except Exception as e:
+            print(f"Error combinando máscaras: {e}")
+            return None
+
+    def _final_cleanup(self, mask):
+        """Apply final morphological operations for clean results."""
+        if mask is None:
+            return None
+            
+        # Remove small noise
+        kernel_small = np.ones((3, 3), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_small)
+        
+        # Fill small holes
+        kernel_medium = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_medium)
+        
+        # Final smoothing
+        mask = cv2.medianBlur(mask, 3)
+        
+        return mask
+
     def _clear_aruco_area_from_mask(self, mask, aruco_corners):
-        """
-        Clears the areas occupied by ArUco markers from the segmentation mask.
-        Args:
-            mask (numpy.ndarray): The combined binary mask (0 for obstacle, 255 for free).
-            aruco_corners (list): List of corner coordinates for ArUco markers.
-                                  Each element is an array of shape (1, 4, 2) from cv2.aruco.detectMarkers.
-        Returns:
-            numpy.ndarray: The mask with ArUco areas cleared (set to 255).
-        """
+        """Clear ArUco marker areas from the mask."""
         if aruco_corners is None or len(aruco_corners) == 0:
             return mask
 
-        # Create a copy to modify
         cleared_mask = mask.copy()
-
         for corners in aruco_corners:
-            # Corners from detectMarkers are float, convert to int for drawing
             pts = np.array(corners[0], dtype=np.int32)
-            # Fill the polygon defined by ArUco corners with white (255 - free space)
             cv2.fillPoly(cleared_mask, [pts], 255)
         
         return cleared_mask
 
-    def _preprocess_wall_scene(self, image):
-        """
-        Preprocess image for wall scenario.
-        For walls, we enhance contrast to make objects stand out.
+    def _generate_emergency_fallback(self, image):
+        """Generate a simple fallback mask when all methods fail."""
+        h, w = image.shape[:2]
         
-        Args:
-            image (numpy.ndarray): Original image in RGB format
-            
-        Returns:
-            numpy.ndarray: Preprocessed image in RGB format
-        """
-        # 1. Usar la función de realce genérica si existe y es beneficiosa
-        # (Asumiendo que enhance_image devuelve RGB si la entrada es RGB)
-        enhanced_initial = enhance_image(image) 
-
-        # 2. Convertir a Lab para trabajar con el canal de Luminosidad (L)
-        lab_image = cv2.cvtColor(enhanced_initial, cv2.COLOR_RGB2Lab)
-        l_channel, a_channel, b_channel = cv2.split(lab_image)
-
-        # 3. Aplicar CLAHE al canal L para mejorar el contraste
-        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8)) # clipLimit un poco más alto
-        cl_channel = clahe.apply(l_channel)
-
-        # 4. Unir los canales de nuevo y convertir de vuelta a RGB
-        updated_lab_image = cv2.merge((cl_channel, a_channel, b_channel))
-        contrasted_rgb_image = cv2.cvtColor(updated_lab_image, cv2.COLOR_Lab2RGB)
-
-        # 5. Aplicar filtro bilateral para suavizar ruido después del realce de contraste,
-        #    manteniendo los bordes nítidos.
-        #    Los parámetros (d, sigmaColor, sigmaSpace) pueden necesitar ajuste.
-        #    d: Diámetro del vecindario de cada píxel. Valores más grandes significan más desenfoque.
-        #    sigmaColor: Filtra colores similares. Valores más grandes influyen en más colores.
-        #    sigmaSpace: Filtra píxeles cercanos. Valores más grandes influyen en píxeles más lejanos.
-        bilateral_filtered_rgb = cv2.bilateralFilter(contrasted_rgb_image, d=7, sigmaColor=75, sigmaSpace=75)
-        # Aumenté un poco sigmaColor y sigmaSpace para un suavizado más fuerte si el contraste introdujo artefactos.
-        
-        return bilateral_filtered_rgb
-
-    def _preprocess_table_scene(self, image):
-        """
-        Preprocess image for table scenario.
-        For tables viewed from above, we try to identify the table surface first.
-        
-        Args:
-            image (numpy.ndarray): Original image
-            
-        Returns:
-            numpy.ndarray: Preprocessed image
-        """
-        # Apply basic enhancement
-        enhanced = enhance_image(image)
-        
-        # Apply bilateral filter to reduce noise while preserving edges
-        bilateral = cv2.bilateralFilter(enhanced, 9, 75, 75)
-        
-        # Try to detect edges - useful for finding table boundaries
-        gray = cv2.cvtColor(bilateral, cv2.COLOR_RGB2GRAY)
-        edges = cv2.Canny(gray, 50, 150)
-        
-        # Dilate edges to make them more prominent
-        kernel = np.ones((3,3), np.uint8)
-        dilated_edges = cv2.dilate(edges, kernel, iterations=1)
-        
-        # Add edges back to the enhanced image to highlight boundaries
-        edge_overlay = enhanced.copy()
-        edge_overlay[dilated_edges > 0] = [255, 255, 255]  # Highlight edges
-        
-        # Blend original enhanced image with edge overlay
-        alpha = 0.2
-        enhanced = cv2.addWeighted(enhanced, 1-alpha, edge_overlay, alpha, 0)
-        
-        return enhanced
-
-    def _process_with_points(self, image, points):
-        """
-        Process an image with guided points.
-        
-        Args:
-            image (numpy.ndarray): Enhanced image
-            points (list): List of [x, y] coordinates
-            
-        Returns:
-            list: List of mask data dictionaries
-        """
-        predictor = SamPredictor(self.sam)
-        predictor.set_image(image)
-        
-        input_points = np.array(points)
-        input_labels = np.ones(len(points))  # All points are foreground
-        
-        masks, scores, _ = predictor.predict(
-            point_coords=input_points,
-            point_labels=input_labels,
-            multimask_output=True,
-        )
-        
-        # Select the best mask
-        best_mask_idx = np.argmax(scores)
-        return [{'segmentation': masks[best_mask_idx], 'area': np.sum(masks[best_mask_idx])}]
-
-    def _process_automatic(self, image):
-        """
-        Process an image automatically without guidance.
-        
-        Args:
-            image (numpy.ndarray): Enhanced image
-            
-        Returns:
-            list: List of mask data dictionaries
-        """
-        return self.mask_generator.generate(image)
-
-    async def _process_wall_masks(self, masks, height, width, original_image_rgb, progress_callback=None, websocket=None):
-        """
-        Combine masks for wall scenario. Reports detailed progress.
-        """
-        async def send_progress(step, progress):
-            if progress_callback and websocket:
-                await progress_callback(websocket, step, progress)
-
-        combined_mask = np.ones((height, width), dtype=np.uint8) * 255
-        
-        if not masks:
-            print("SAM returned no masks. Using fallback.")
-            return self._generate_fallback_mask(original_image_rgb, "pared")
-
-        sorted_masks = sorted(masks, key=lambda x: x.get('stability_score', 0) if 'stability_score' in x else x.get('area', 0), reverse=True)
-        
-        min_area_ratio_threshold = 0.0002
-        min_absolute_pixel_area_threshold = 100
-        max_area_ratio_threshold = 0.20
-
-        valid_masks_segments = []
-        
-        total_masks_to_process = len(sorted_masks)
-        # Rango de progreso para esta sección: 75% a 88%
-        start_progress = 75.0
-        end_progress = 88.0
-
-        if total_masks_to_process > 0:
-            for i, mask_data in enumerate(sorted_masks):
-                progress_ratio = (i + 1) / total_masks_to_process
-                current_progress = start_progress + progress_ratio * (end_progress - start_progress)
-                await send_progress(f"Filtrando máscara {i+1}/{total_masks_to_process}", current_progress)
-                
-                segmentation_mask = mask_data['segmentation'].astype(np.uint8)
-                current_mask_area_pixels = np.sum(segmentation_mask)
-                current_mask_area_ratio = current_mask_area_pixels / (height * width)
-
-                if current_mask_area_pixels == 0: continue
-                if current_mask_area_ratio > max_area_ratio_threshold: continue
-                if current_mask_area_ratio < min_area_ratio_threshold and current_mask_area_pixels < min_absolute_pixel_area_threshold: continue
-                
-                kernel_open = np.ones((3,3),np.uint8)
-                opened_segment = cv2.morphologyEx(segmentation_mask, cv2.MORPH_OPEN, kernel_open, iterations=1)
-                
-                kernel_close = np.ones((5,5),np.uint8)
-                cleaned_segment = cv2.morphologyEx(opened_segment, cv2.MORPH_CLOSE, kernel_close, iterations=2)
-                
-                current_mask_area_pixels = np.sum(cleaned_segment)
-                if current_mask_area_pixels == 0: continue
-                
-                valid_masks_segments.append(cleaned_segment)
-        
-        if valid_masks_segments:
-            for segment in valid_masks_segments:
-                combined_mask[segment > 0] = 0
-        else:
-            print("No SAM masks passed filtering. Using fallback.")
-            return self._generate_fallback_mask(original_image_rgb, "pared")
-        
-        return combined_mask
-
-    async def _process_table_masks(self, masks, height, width, original_image, progress_callback=None, websocket=None):
-        """
-        Combine masks for table scenario.
-        For tables, we first identify the table surface, then objects on it.
-        
-        Args:
-            masks (list): List of mask data dictionaries
-            height (int): Image height
-            width (int): Image width
-            original_image (numpy.ndarray): Original input image
-            progress_callback (func, optional): Async function for progress updates.
-            websocket (WebSocketServerProtocol, optional): WebSocket connection.
-            
-        Returns:
-            numpy.ndarray: Combined binary mask
-        """
-        # (La implementación de progreso detallado para la mesa se omite por brevedad,
-        # pero seguiría un patrón similar al de _process_wall_masks si fuera necesario)
-        
-        combined_mask = np.ones((height, width), dtype=np.uint8) * 255
-        table_mask = self._identify_table_surface(masks, height, width, original_image)
-        masks = sorted(masks, key=lambda x: x['area'], reverse=True)
-        objects_mask = np.zeros((height, width), dtype=np.uint8)
-        
-        for mask_data in masks:
-            mask = mask_data['segmentation'].astype(np.uint8)
-            area_ratio = mask_data['area'] / (height * width)
-            
-            if area_ratio < 0.01 or area_ratio > 0.7:
-                continue
-                
-            if table_mask is not None:
-                overlap = np.logical_and(mask, table_mask)
-                overlap_ratio = np.sum(overlap) / mask_data['area']
-                if overlap_ratio < 0.5:
-                    continue
-            
-            cleaned_mask = clean_mask(mask)
-            objects_mask = np.logical_or(objects_mask, cleaned_mask).astype(np.uint8)
-        
-        if np.any(objects_mask):
-            combined_mask[objects_mask > 0] = 0
-        else:
-            hsv = cv2.cvtColor(original_image, cv2.COLOR_RGB2HSV)
-            s_channel = hsv[:,:,1]
-            v_channel = hsv[:,:,2]
-            kernel_size = 5
-            s_mean = cv2.blur(s_channel, (kernel_size, kernel_size))
-            s_sqmean = cv2.blur(s_channel * s_channel, (kernel_size, kernel_size))
-            s_variance = s_sqmean - s_mean * s_mean
-            v_mean = cv2.blur(v_channel, (kernel_size, kernel_size))
-            v_sqmean = cv2.blur(v_channel * v_channel, (kernel_size, kernel_size))
-            v_variance = v_sqmean - v_mean * v_mean
-            total_variance = s_variance + v_variance
-            threshold = np.mean(total_variance) + np.std(total_variance)
-            object_areas = (total_variance > threshold).astype(np.uint8) * 255
-            kernel = np.ones((5,5), np.uint8)
-            object_areas = cv2.morphologyEx(object_areas, cv2.MORPH_CLOSE, kernel)
-            object_areas = cv2.morphologyEx(object_areas, cv2.MORPH_OPEN, kernel)
-            combined_mask[object_areas > 0] = 0
-        
-        return combined_mask
-
-    def _identify_table_surface(self, masks, height, width, original_image):
-        """
-        Try to identify the table surface in the image.
-        
-        Args:
-            masks (list): List of mask dictionaries
-            height (int): Image height
-            width (int): Image width
-            original_image (numpy.ndarray): Original image
-            
-        Returns:
-            numpy.ndarray or None: Table mask if found, None otherwise
-        """
-        # Start with the largest mask, which might be the table
-        large_masks = [m for m in masks if m['area'] > (height * width * 0.3)]
-        
-        if not large_masks:
-            # If no large mask found, try to detect the table using color
-            return self._detect_table_by_color(original_image)
-        
-        # Sort by area, largest first
-        large_masks = sorted(large_masks, key=lambda x: x['area'], reverse=True)
-        
-        # Check if the largest mask is likely the table
-        table_candidate = large_masks[0]['segmentation'].astype(np.uint8)
-        
-        # Check if the mask is centered in the image
-        mask_center_y, mask_center_x = np.where(table_candidate)
-        if len(mask_center_y) > 0 and len(mask_center_x) > 0:
-            center_y = np.mean(mask_center_y)
-            center_x = np.mean(mask_center_x)
-            
-            # Check if center is within the central region of the image
-            y_offset = abs(center_y - height/2) / (height/2)
-            x_offset = abs(center_x - width/2) / (width/2)
-            
-            if y_offset < 0.5 and x_offset < 0.5:
-                return table_candidate
-        
-        return self._detect_table_by_color(original_image)
-
-    def _detect_table_by_color(self, image):
-        """
-        Detect table by color homogeneity.
-        
-        Args:
-            image (numpy.ndarray): Original image
-            
-        Returns:
-            numpy.ndarray or None: Table mask if found, None otherwise
-        """
-        # Convert to HSV
+        # Convert to HSV and look for high saturation areas (colored objects)
         hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+        _, saturation, _ = cv2.split(hsv)
         
-        # Use K-means to find dominant colors
-        pixels = hsv.reshape(-1, 3)
-        pixels = np.float32(pixels)
+        # Threshold on saturation to find colored areas
+        _, sat_thresh = cv2.threshold(saturation, 60, 255, cv2.THRESH_BINARY)
         
-        # Define criteria and apply kmeans
-        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
-        k = 3  # Try to identify 3 main color regions
-        _, labels, centers = cv2.kmeans(pixels, k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+        # Clean up
+        kernel = np.ones((5, 5), np.uint8)
+        sat_thresh = cv2.morphologyEx(sat_thresh, cv2.MORPH_CLOSE, kernel)
+        sat_thresh = cv2.morphologyEx(sat_thresh, cv2.MORPH_OPEN, kernel)
         
-        # Count pixels in each cluster
-        cluster_counts = np.bincount(labels.flatten())
+        # Create result mask
+        result_mask = np.ones((h, w), dtype=np.uint8) * 255
+        result_mask[sat_thresh > 0] = 0
         
-        # Find the second largest cluster (often the table)
-        sorted_indices = np.argsort(cluster_counts)
-        
-        if len(sorted_indices) >= 2:
-            table_cluster = sorted_indices[-2]  # Second largest cluster
-            
-            # Create a mask for this cluster
-            mask = (labels.flatten() == table_cluster).reshape(image.shape[:2])
-            
-            # Clean up the mask
-            kernel = np.ones((5,5), np.uint8)
-            mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
-            
-            # Check if this looks like a table (fairly central, fairly large)
-            if np.sum(mask) > (image.shape[0] * image.shape[1] * 0.2):
-                return mask
-        
-        return None
-
-    def _color_based_segmentation(self, image):
-        """
-        Perform color-based segmentation as a fallback method.
-        
-        Args:
-            image (numpy.ndarray): Original image
-            
-        Returns:
-            numpy.ndarray: Binary mask
-        """
-        # Convert to HSV for better color segmentation
-        hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
-        
-        # Calculate gradient magnitude
-        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-        sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-        gradient_magnitude = np.sqrt(sobelx**2 + sobely**2)
-        
-        # Normalize gradient magnitude
-        gradient_magnitude = cv2.normalize(gradient_magnitude, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        
-        # Threshold gradient to find edges
-        _, edge_mask = cv2.threshold(gradient_magnitude, 30, 255, cv2.THRESH_BINARY)
-        
-        # Use clustering to separate foreground from background
-        pixels = hsv.reshape(-1, 3)
-        pixels = np.float32(pixels)
-        
-        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
-        k = 3  # Assuming we have background, foreground, and transitional areas
-        _, labels, _ = cv2.kmeans(pixels, k, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
-        
-        # Count pixels in each cluster
-        counts = np.zeros(k)
-        for i in range(k):
-            counts[i] = np.sum(labels == i)
-        
-        # The largest cluster is likely the background
-        background_cluster = np.argmax(counts)
-        
-        # Create a binary mask (255 for background, 0 for objects)
-        result_mask = np.ones(image.shape[:2], dtype=np.uint8) * 255
-        
-        # Mark non-background clusters as objects (black)
-        flat_mask = result_mask.flatten()
-        flat_mask[labels.flatten() != background_cluster] = 0
-        result_mask = flat_mask.reshape(image.shape[:2])
-        
-        # Also consider edges as part of objects
-        result_mask[edge_mask > 0] = 0
-        
-        # Clean up with morphological operations
-        kernel = np.ones((3,3), np.uint8)
-        result_mask = cv2.morphologyEx(result_mask, cv2.MORPH_CLOSE, kernel)
-        result_mask = cv2.morphologyEx(result_mask, cv2.MORPH_OPEN, kernel)
-        
+        print("Usando máscara de emergencia basada en saturación.")
         return result_mask
 
-    def _generate_fallback_mask(self, image, scene_type):
-        """
-        Generate a fallback mask when validation fails or SAM fails.
-        
-        Args:
-            image (numpy.ndarray): Original image
-            scene_type (str): Either "wall" or "table"
-            
-        Returns:
-            numpy.ndarray: Binary mask
-        """
-        h, w = image.shape[:2]
-        mask = np.ones((h, w), dtype=np.uint8) * 255
-        
-        # Convert to grayscale and threshold
-        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        
-        # Apply different thresholding based on scene type
-        if scene_type.lower() == "table":
-            # For table, use adaptive thresholding to find objects
-            binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                          cv2.THRESH_BINARY_INV, 11, 2)
-        else:
-            # For wall, use Otsu's method with enhancements
-            # Aplicar CLAHE para mejorar el contraste local y manejar mejor las variaciones de iluminación
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-            processed_gray = clahe.apply(gray) 
-            
-            _, binary = cv2.threshold(processed_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        
-        # Clean up the binary image
-        # Usar kernels distintos para apertura y cierre en el fallback si es necesario
-        kernel_open_fallback = np.ones((3,3), np.uint8)
-        kernel_close_fallback = np.ones((5,5), np.uint8) # Kernel más grande para cerrar bien
+    def cleanup(self):
+        """Clean up resources."""
+        if self.executor:
+            self.executor.shutdown(wait=True)
 
-        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel_open_fallback, iterations=1)
-        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel_close_fallback, iterations=2) 
-
-        # Solo para el escenario de pared, si Otsu (invertido) da una máscara mayormente negra, 
-        # es probable que haya interpretado una pared vacía/uniforme como "objeto".
-        if scene_type.lower() != "table": # Esta lógica es específica para la pared
-            fallback_black_ratio_check = np.sum(binary == 0) / (h * w) # Porcentaje de píxeles negros en la máscara binaria (invertida)
-            # Si más del 70% es negro (obstáculo) en el fallback de pared, es probable un error.
-            if fallback_black_ratio_check > 0.70: 
-                print("Fallback (Otsu para pared) produjo una máscara predominantemente negra, devolviendo máscara blanca.")
-                return np.ones((h, w), dtype=np.uint8) * 255 # Devolver todo blanco
-
-        # Find contours
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # Filter contours by area - ajustados para mayor sensibilidad a objetos pequeños y restricción a muy grandes
-        # Aseguramos un mínimo absoluto de píxeles y un porcentaje del área total.
-        min_pixel_area_fallback = 50 # Mínimo de 50 píxeles para ser considerado un objeto.
-        min_area_ratio_fallback = 0.0005 # Objetos que ocupen al menos 0.05% de la imagen
-        min_area = max(min_pixel_area_fallback, min_area_ratio_fallback * h * w)
-        max_area = 0.20 * h * w    # Máximo 20% del área de la imagen para evitar confundir fondo con objeto
-        
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if min_area < area < max_area:
-                # Fill in the contour on our mask
-                cv2.drawContours(mask, [contour], -1, 0, -1) # -1 para rellenar
-        
-        return mask
+# Backward compatibility - keep the original class name
+class SAMProcessor(FastObjectDetector):
+    """Alias for backward compatibility."""
+    pass

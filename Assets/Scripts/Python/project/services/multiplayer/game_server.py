@@ -6,14 +6,10 @@ import asyncio
 import websockets
 import json
 import cv2
-import numpy as np
-import threading
-import time
-import queue
 
 from utils.camera import CameraManager
 from utils.image_processings import encode_frame_to_jpeg
-from models.sam_model import SAMProcessor 
+from models.sam_model import FastObjectDetector as SAMProcessor 
 from utils.pathfinding import handle_astar_from_mask
 from models.finger_pointer import GridSystem, FingerPositionDetector
 from models.aruco import ArucoDetector
@@ -21,7 +17,7 @@ from models.aruco import ArucoDetector
 from config.settings import (
     WEBSOCKET_HOST, WEBSOCKET_PORT,
     MESSAGE_TYPE_CAMERA_FRAME, MESSAGE_TYPE_MASK, MESSAGE_TYPE_PATH,
-    MESSAGE_TYPE_GRID_POSITION, CAMERA_INDEX, CAMERA_WIDTH, CAMERA_HEIGHT,
+    MESSAGE_TYPE_GRID_POSITION, CAMERA_INDEX, CAMERA_WIDTH_PREFERRED, CAMERA_HEIGHT_PREFERRED,
     CAMERA_FPS, MESSAGE_TYPE_GRID_CONFIRMATION, TRANSMISSION_FPS, MESSAGE_TYPE_PROGRESS_UPDATE,
     MESSAGE_TYPE_CAMERA_INFO
 )
@@ -36,7 +32,12 @@ class GameServer:
         """Initialize the Game server."""
         self.server = None
         # This manager is for the planning phase (SAM and preview)
-        self.planning_camera_manager = CameraManager(camera_index=CAMERA_INDEX, width=CAMERA_WIDTH, height=CAMERA_HEIGHT, fps=CAMERA_FPS)
+        self.planning_camera_manager = CameraManager(
+            camera_index=CAMERA_INDEX, 
+            width=CAMERA_WIDTH_PREFERRED, 
+            height=CAMERA_HEIGHT_PREFERRED, 
+            fps=CAMERA_FPS
+        )
         self.sam_processor = SAMProcessor()
         self.aruco_detector = ArucoDetector()
         # GridSystem and FingerDetector will be initialized on-demand when combat starts,
@@ -71,12 +72,10 @@ class GameServer:
                         if not self.planning_camera_manager.is_running:
                             self.planning_camera_manager.start_camera()
 
-                        # Send camera dimensions to client, assuming CameraManager has a method to get the actual resolution.
+                        # Send camera dimensions to client using the new get_resolution method
                         if self.planning_camera_manager.is_running:
                             try:
-                                # This assumes CameraManager has a way to expose the actual resolution.
-                                # A method like get_resolution() or properties .width and .height are common.
-                                width, height = self.planning_camera_manager.width, self.planning_camera_manager.height
+                                width, height = self.planning_camera_manager.get_resolution()
                                 info_payload = {"width": width, "height": height}
                                 await websocket.send(bytes([MESSAGE_TYPE_CAMERA_INFO]) + json.dumps(info_payload).encode('utf-8'))
                                 print(f"Sent planning camera info: {width}x{height}")
@@ -232,47 +231,27 @@ class GameServer:
                 print("Planning camera stopped after SAM process.")
 
     async def handle_combat_mode(self, websocket):
-        """Handle the combat mode with dedicated, threaded finger detection."""
-        cap = None
-        capture_thread = None
-        stop_event = threading.Event()
-        frame_queue = queue.Queue(maxsize=2)
+        """Handle the combat mode with enhanced camera manager."""
 
-        # The capture function is now simpler, it just reads from the camera object it receives.
-        def capture_frames_thread(cap_instance, stop_event_instance, queue_instance):
-            try:
-                while not stop_event_instance.is_set():
-                    if not cap_instance or not cap_instance.isOpened():
-                        time.sleep(0.1)
-                        continue
-                    ret, frame = cap_instance.read()
-                    if not ret:
-                        time.sleep(0.01)
-                        continue
-                    if queue_instance.full():
-                        try: queue_instance.get_nowait()
-                        except queue.Empty: pass
-                    queue_instance.put(frame)
-            finally:
-                if cap_instance and cap_instance.isOpened():
-                    cap_instance.release()
-                print("Combat camera thread finished and released camera.")
+
 
         try:
-            # --- Camera initialization is now done in the main async function ---
-            cap = cv2.VideoCapture(CAMERA_INDEX)
-            if not cap.isOpened():
-                print(f"ERROR: Could not open camera {CAMERA_INDEX} for combat mode.")
-                return
-
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-            cap.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
+            # --- Use enhanced camera manager for combat mode ---
+            combat_camera = CameraManager(
+                camera_index=CAMERA_INDEX, 
+                width=CAMERA_WIDTH_PREFERRED, 
+                height=CAMERA_HEIGHT_PREFERRED, 
+                fps=CAMERA_FPS
+            )
             
-            # Get the ACTUAL resolution from the camera driver
-            actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            print(f"Combat camera {CAMERA_INDEX} opened with actual resolution: {actual_width}x{actual_height}.")
+            if not combat_camera.start_camera():
+                print(f"ERROR: Could not start camera {CAMERA_INDEX} for combat mode.")
+                return
+            
+            # Get the ACTUAL resolution from the camera manager
+            actual_width, actual_height = combat_camera.get_resolution()
+            actual_fps = combat_camera.get_fps()
+            print(f"Combat camera {CAMERA_INDEX} opened with actual resolution: {actual_width}x{actual_height} @ {actual_fps}fps")
             
             # Send this information to the Unity client
             info_payload = {"width": actual_width, "height": actual_height}
@@ -284,19 +263,13 @@ class GameServer:
                 self.grid_system = GridSystem(actual_width, actual_height)
                 self.finger_detector = FingerPositionDetector(self.grid_system)
 
-            # --- Start the capture thread, passing it the initialized camera object ---
-            capture_thread = threading.Thread(target=capture_frames_thread, args=(cap, stop_event, frame_queue), daemon=True)
-            capture_thread.start()
-            
             is_active = True
             while is_active:
-                try:
-                    frame_bgr = frame_queue.get(timeout=1.0)
-                except queue.Empty:
-                    print("Combat frame queue empty. Waiting...")
+                # Get frame from camera manager (already in RGB format)
+                frame_rgb = combat_camera.get_current_frame()
+                if frame_rgb is None:
+                    await asyncio.sleep(0.01)
                     continue
-
-                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                 
                 # Ensure finger detector is ready
                 if self.finger_detector is None:
@@ -325,7 +298,7 @@ class GameServer:
                         await websocket.send(bytes([MESSAGE_TYPE_GRID_CONFIRMATION]) + json.dumps(confirmed_data).encode('utf-8'))
                         print(f"Sent confirmation for cell {selected_cell}")
 
-                await asyncio.sleep(1 / (CAMERA_FPS * 1.5)) # Adjusted sleep
+                await asyncio.sleep(1 / (actual_fps * 1.5)) # Adjusted sleep based on actual FPS
 
         except asyncio.CancelledError:
             is_active = False
@@ -334,10 +307,9 @@ class GameServer:
             is_active = False
             print("Client disconnected during combat mode.")
         finally:
-            stop_event.set()
-            if capture_thread:
-                capture_thread.join(timeout=1.0)
-            # The thread now handles releasing the camera, so we don't do it here.
+            # Clean up camera manager
+            if 'combat_camera' in locals():
+                combat_camera.stop_camera()
             print("Exiting combat mode and cleaning up resources.")
     
     def cleanup(self):
