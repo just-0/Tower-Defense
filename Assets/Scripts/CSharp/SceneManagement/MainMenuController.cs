@@ -9,6 +9,10 @@ public class MainMenuController : MonoBehaviour
     [Header("UI Feedback")]
     [Tooltip("Panel que contiene los botones para desactivarlo durante la carga.")]
     [SerializeField] private GameObject buttonPanel;
+    
+    [Header("Panel Management")]
+    [Tooltip("Panel de configuración (opcional, se auto-detecta si no se asigna)")]
+    [SerializeField] private GameObject settingsPanel;
 
     // Asigna este método al botón "Jugar Solo"
     public async void OnSinglePlayerClicked()
@@ -19,7 +23,7 @@ public class MainMenuController : MonoBehaviour
 
         if (BackendManager.Instance != null)
         {
-            Debug.Log("Solicitando modo Single-Player al backend...");
+            // Debug.Log("Solicitando modo Single-Player al backend...");
             await BackendManager.Instance.RequestBackendMode(BackendMode.SinglePlayer);
         }
 
@@ -57,11 +61,200 @@ public class MainMenuController : MonoBehaviour
         SceneManager.LoadScene("2_Lobby");
     }
 
+    // Asigna este método al botón "Tutorial"
+    public void OnTutorialClicked()
+    {
+        // Ya no carga una escena directamente, sino que muestra el panel de selección de tutorial.
+        if (UniversalPanelManager.Instance != null)
+        {
+            UniversalPanelManager.Instance.ShowPanel("TutorialPanel");
+        }
+        else
+        {
+            Debug.LogError("No se encontró UniversalPanelManager en la escena. No se puede mostrar el panel de tutorial.");
+        }
+    }
+
+    // Asigna este método al botón "Configuración"
+    public void OnSettingsClicked()
+    {
+        // Debug.Log("Botón de Configuración presionado.");
+        
+        // Usar el UniversalPanelManager para manejar el cambio de paneles y gestos.
+        if (UniversalPanelManager.Instance != null)
+        {
+            UniversalPanelManager.Instance.ShowPanel("SettingsPanel");
+        }
+        else
+        {
+            Debug.LogError("No se encontró UniversalPanelManager en la escena. No se puede cambiar al panel de configuración.");
+            // Fallback por si acaso, aunque no debería ocurrir si está bien configurado.
+            // Pero lo ideal es asegurar que siempre haya una instancia de UniversalPanelManager.
+            if (settingsPanel != null)
+            {
+                // Crear panel de configuración simple
+                CreateSettingsPanel();
+            }
+        }
+    }
+    
+    // Método universal para ir a cualquier panel
+    public void ShowPanel(string panelName)
+    {
+        if (UniversalPanelManager.Instance != null)
+        {
+            UniversalPanelManager.Instance.ShowPanel(panelName);
+        }
+        else
+        {
+            Debug.LogWarning($"UniversalPanelManager no encontrado. No se puede mostrar: {panelName}");
+        }
+    }
+    
+    // Método para volver al panel anterior
+    public void GoBackToPreviousPanel()
+    {
+        if (UniversalPanelManager.Instance != null)
+        {
+            UniversalPanelManager.Instance.GoBack();
+        }
+        else
+        {
+            Debug.LogWarning("UniversalPanelManager no encontrado para navegación hacia atrás");
+        }
+    }
+    
+    void EnsureSettingsPanelExists()
+    {
+        if (settingsPanel == null)
+        {
+            // Buscar si ya existe
+            settingsPanel = GameObject.Find("SettingsPanel");
+            
+            if (settingsPanel == null)
+            {
+                // Crear panel de configuración simple
+                CreateSettingsPanel();
+            }
+        }
+    }
+    
+    void CreateSettingsPanel()
+    {
+        if (buttonPanel == null) return;
+        
+        // Debug.Log("Creando panel de configuración automáticamente...");
+        
+        // Crear como hermano del buttonPanel
+        settingsPanel = new GameObject("SettingsPanel");
+        settingsPanel.transform.SetParent(buttonPanel.transform.parent, false);
+        
+        // Copiar RectTransform del buttonPanel
+        RectTransform buttonRect = buttonPanel.GetComponent<RectTransform>();
+        RectTransform settingsRect = settingsPanel.AddComponent<RectTransform>();
+        
+        if (buttonRect != null)
+        {
+            settingsRect.anchorMin = buttonRect.anchorMin;
+            settingsRect.anchorMax = buttonRect.anchorMax;
+            settingsRect.offsetMin = buttonRect.offsetMin;
+            settingsRect.offsetMax = buttonRect.offsetMax;
+            settingsRect.anchoredPosition = buttonRect.anchoredPosition;
+            settingsRect.sizeDelta = buttonRect.sizeDelta;
+        }
+        
+        // Agregar fondo
+        var bgImage = settingsPanel.AddComponent<UnityEngine.UI.Image>();
+        bgImage.color = new Color(0.1f, 0.1f, 0.1f, 0.9f);
+        
+        // Crear contenido básico
+        CreateSettingsContent();
+        
+        // Inicialmente oculto
+        settingsPanel.SetActive(false);
+        
+        // Debug.Log("✅ Panel de configuración creado");
+    }
+    
+    void CreateSettingsContent()
+    {
+        // Título
+        var titleObj = new GameObject("Title");
+        titleObj.transform.SetParent(settingsPanel.transform, false);
+        
+        var titleRect = titleObj.AddComponent<RectTransform>();
+        titleRect.anchorMin = new Vector2(0.5f, 0.8f);
+        titleRect.anchorMax = new Vector2(0.5f, 0.8f);
+        titleRect.pivot = Vector2.one * 0.5f;
+        titleRect.sizeDelta = new Vector2(400, 80);
+        
+        var titleText = titleObj.AddComponent<UnityEngine.UI.Text>();
+        titleText.text = "⚙️ CONFIGURACIÓN";
+        titleText.fontSize = 36;
+        titleText.color = Color.yellow;
+        titleText.alignment = TextAnchor.MiddleCenter;
+        titleText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        
+        // Instrucciones
+        var instrObj = new GameObject("Instructions");
+        instrObj.transform.SetParent(settingsPanel.transform, false);
+        
+        var instrRect = instrObj.AddComponent<RectTransform>();
+        instrRect.anchorMin = new Vector2(0.5f, 0.5f);
+        instrRect.anchorMax = new Vector2(0.5f, 0.5f);
+        instrRect.pivot = Vector2.one * 0.5f;
+        instrRect.sizeDelta = new Vector2(600, 200);
+        
+        var instrText = instrObj.AddComponent<UnityEngine.UI.Text>();
+        instrText.text = "🎮 Configuración:\n\n" +
+                        "Aquí puedes cambiar ajustes del juego\n\n" +
+                        "Usa los gestos asignados\n" +
+                        "para navegar y confirmar";
+        instrText.fontSize = 24;
+        instrText.color = Color.white;
+        instrText.alignment = TextAnchor.MiddleCenter;
+        instrText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+    }
+    
+    void CreateUniversalPanelManager()
+    {
+        var managerObj = new GameObject("UniversalPanelManager");
+        var manager = managerObj.AddComponent<UniversalPanelManager>();
+        
+        // Debug.Log("✅ UniversalPanelManager creado automáticamente");
+        
+        // Pequeña espera para que se inicialice y luego intentar de nuevo
+        StartCoroutine(DelayedShowSettings());
+    }
+    
+    System.Collections.IEnumerator DelayedShowSettings()
+    {
+        yield return new WaitForEndOfFrame();
+        if (UniversalPanelManager.Instance != null)
+        {
+            UniversalPanelManager.Instance.ShowPanel("SettingsPanel");
+        }
+    }
+
     // Asigna este método al botón "Salir"
     public void OnQuitClicked()
     {
-        Debug.Log("Saliendo de la aplicación...");
+        // Debug.Log("Saliendo de la aplicación...");
         Application.Quit();
+    }
+
+    // Método para volver al menú principal desde configuración
+    public void OnBackToMenuClicked()
+    {
+        // Usar UniversalPanelManager para manejar el regreso.
+        if (UniversalPanelManager.Instance != null)
+        {
+            UniversalPanelManager.Instance.ShowPanel("MenuPanel");
+        }
+        else
+        {
+            Debug.LogError("No se encontró UniversalPanelManager en la escena. No se puede volver al menú principal.");
+        }
     }
 
     private async Task<bool> PingServerUntilReady(string url, float timeout)

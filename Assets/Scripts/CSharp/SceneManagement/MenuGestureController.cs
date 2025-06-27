@@ -10,13 +10,21 @@ public class MenuGestureController : MonoBehaviour
     [SerializeField] private RawImage cameraFeed;
     [SerializeField] private GameObject loadingPanel; // Panel que se muestra mientras carga
     [SerializeField] private Text fingerCountText;
-    [SerializeField] private Slider holdProgressSlider;
+    [SerializeField] private Slider holdProgressSlider; // Mantenido para compatibilidad
     [SerializeField] private MainMenuController mainMenuController; // Referencia al controlador del menú
     [SerializeField] private SettingsController settingsController; // Referencia directa al SettingsController
+    
+    [Header("Simple Gesture System")]
+    [SerializeField] private SimpleGestureManager simpleGestureManager; // Sistema simple de gestos
+    [SerializeField] private bool useSimpleGestureSystem = true; // Toggle para usar el sistema simple
 
     private WebSocket websocket;
     private Texture2D receivedTexture;
     
+    // --- INICIO DE CAMBIOS PARA PERSISTENCIA ---
+    public static MenuGestureController Instance { get; private set; }
+    // --- FIN DE CAMBIOS PARA PERSISTENCIA ---
+
     private const byte MESSAGE_TYPE_CAMERA_FRAME = 1;
     private const byte MESSAGE_TYPE_FINGER_COUNT = 5;
     private const byte MESSAGE_TYPE_SERVER_STATUS = 8;
@@ -29,27 +37,51 @@ public class MenuGestureController : MonoBehaviour
     private bool firstFrameReceived = false; // Flag para controlar la carga
     private const float REQUIRED_HOLD_TIME = 2.5f; // Segundos para mantener el gesto
 
-    async void Start()
+    void Awake()
     {
-        if (mainMenuController == null)
+        // --- INICIO DE CAMBIOS PARA PERSISTENCIA ---
+        if (Instance == null)
         {
-            Debug.LogError("MainMenuController no está asignado en MenuGestureController.");
-            enabled = false;
+            Instance = this;
+            DontDestroyOnLoad(transform.root.gameObject); // Hacemos que todo el objeto Managers persista
+        }
+        else if (Instance != this)
+        {
+            // Si ya existe una instancia (de una escena anterior), destruimos este nuevo objeto duplicado.
+            Destroy(transform.root.gameObject);
             return;
         }
+        // --- FIN DE CAMBIOS PARA PERSISTENCIA ---
+    }
 
-        // Mostrar el panel de carga al inicio
+    async void Start()
+    {
+        // La UI se asignará dinámicamente, por lo que las referencias iniciales pueden ser nulas.
         if (loadingPanel != null) loadingPanel.SetActive(true);
         if (cameraFeed != null) cameraFeed.gameObject.SetActive(false);
 
         receivedTexture = new Texture2D(2, 2);
         websocket = new WebSocket("ws://localhost:8766"); // Conectar al nuevo puerto del menú
 
-        websocket.OnOpen += () => Debug.Log("Conectado al servidor de gestos del menú.");
+        websocket.OnOpen += () => {}; // Debug.Log("Conectado al servidor de gestos del menú.");
         websocket.OnError += (e) => Debug.LogError($"Error en WebSocket del menú: {e}");
         websocket.OnMessage += OnMessageReceived;
 
+        // Configurar el sistema simple de gestos si está habilitado
+        if (useSimpleGestureSystem && simpleGestureManager != null)
+        {
+            // Debug.Log("Sistema simple de gestos activado");
+        }
+
         await websocket.Connect();
+
+        #if !UNITY_WEBGL || UNITY_EDITOR
+            websocket?.DispatchMessageQueue();
+        #endif
+
+        // Ya no es necesario manejar aquí los gestos antiguos,
+        // el sistema se ha modularizado completamente.
+        // HandleGestureActions();
     }
 
     void Update()
@@ -58,7 +90,9 @@ public class MenuGestureController : MonoBehaviour
             websocket?.DispatchMessageQueue();
         #endif
 
-        HandleGestureActions();
+        // Ya no es necesario manejar aquí los gestos antiguos,
+        // el sistema se ha modularizado completamente.
+        // HandleGestureActions();
     }
 
     private void OnMessageReceived(byte[] bytes)
@@ -86,7 +120,7 @@ public class MenuGestureController : MonoBehaviour
                         if (loadingPanel != null) loadingPanel.SetActive(false);
                         if (cameraFeed != null) cameraFeed.gameObject.SetActive(true);
                     }
-                    Debug.Log($"Recibido frame de cámara ({messageData.Length} bytes).");
+                    // Debug.Log($"Recibido frame de cámara ({messageData.Length} bytes).");
                     receivedTexture.LoadImage(messageData);
                     if(cameraFeed) cameraFeed.texture = receivedTexture;
                     break;
@@ -95,9 +129,15 @@ public class MenuGestureController : MonoBehaviour
                     FingerCountData data = JsonUtility.FromJson<FingerCountData>(jsonStr);
                     currentFingerCount = data.count;
                     if(fingerCountText) fingerCountText.text = $"Dedos: {data.count}";
+                    
+                    // Actualizar el sistema simple de gestos
+                    if (useSimpleGestureSystem && simpleGestureManager != null)
+                    {
+                        simpleGestureManager.UpdateFingerCount(data.count);
+                    }
                     break;
                 case MESSAGE_TYPE_SERVER_STATUS:
-                    Debug.Log("Recibido mensaje de estado del servidor en el menú.");
+                    // Debug.Log("Recibido mensaje de estado del servidor en el menú.");
                     break;
                 case MESSAGE_TYPE_CAMERA_LIST:
                     string camListJson = Encoding.UTF8.GetString(messageData);
@@ -109,6 +149,46 @@ public class MenuGestureController : MonoBehaviour
                     break;
             }
         });
+    }
+
+    // --- MÉTODOS PÚBLICOS PARA ENLACE DE UI ---
+
+    /// <summary>
+    /// Permite que un 'Binder' de UI de una escena registre sus elementos en este gestor persistente.
+    /// </summary>
+    public void RegisterUI(RawImage newCameraFeed, Text newFingerCountText, GameObject newLoadingPanel)
+    {
+        Debug.Log("MenuGestureController: Registrando nueva UI desde la escena actual.");
+        cameraFeed = newCameraFeed;
+        fingerCountText = newFingerCountText;
+        loadingPanel = newLoadingPanel;
+
+        // Aplicamos el estado actual a la nueva UI para que todo se vea consistente.
+        if (cameraFeed != null)
+        {
+            cameraFeed.texture = receivedTexture;
+            cameraFeed.gameObject.SetActive(firstFrameReceived);
+        }
+        if (loadingPanel != null)
+        {
+            loadingPanel.SetActive(!firstFrameReceived);
+        }
+        if (fingerCountText != null)
+        {
+            fingerCountText.text = $"Dedos: {currentFingerCount}";
+        }
+    }
+
+    /// <summary>
+    /// Limpia las referencias de UI para evitar errores cuando se deja una escena.
+    /// </summary>
+    public void UnregisterUI(MenuUIBinder binder)
+    {
+        // Limpiamos las referencias para no apuntar a objetos destruidos.
+        Debug.Log("MenuGestureController: Des-registrando UI de la escena anterior.");
+        cameraFeed = null;
+        fingerCountText = null;
+        loadingPanel = null;
     }
 
     public async void RequestCameraSwitch(int newIndex)
@@ -125,12 +205,25 @@ public class MenuGestureController : MonoBehaviour
             Buffer.BlockCopy(messageBytes, 0, finalMessage, 1, messageBytes.Length);
 
             await websocket.Send(finalMessage);
-            Debug.Log($"Solicitando cambio de cámara al índice {newIndex}");
+            // Debug.Log($"Solicitando cambio de cámara al índice {newIndex}");
         }
     }
 
     private void HandleGestureActions()
     {
+        // Si está usando el sistema simple, no procesar la lógica antigua
+        if (useSimpleGestureSystem && simpleGestureManager != null)
+        {
+            return; // El SimpleGestureManager maneja toda la lógica
+        }
+
+        // Doble seguridad: si el sistema simple no se usa pero no hay controlador de menú, no hacer nada.
+        if (mainMenuController == null)
+        {
+            return;
+        }
+
+        // Lógica del sistema antiguo (mantenida para compatibilidad)
         bool validGesture = currentFingerCount == 1 || currentFingerCount == 3 || currentFingerCount == 5;
 
         if (validGesture && !actionTriggered)
@@ -144,17 +237,17 @@ public class MenuGestureController : MonoBehaviour
                 
                 if (currentFingerCount == 1)
                 {
-                    Debug.Log("Gesto 'Un Jugador' detectado.");
+                    // Debug.Log("Gesto 'Un Jugador' detectado.");
                     mainMenuController.OnSinglePlayerClicked();
                 }
                 else if (currentFingerCount == 3)
                 {
-                    Debug.Log("Gesto 'Multijugador' detectado.");
+                    // Debug.Log("Gesto 'Multijugador' detectado.");
                     mainMenuController.OnMultiplayerClicked();
                 }
                 else if (currentFingerCount == 5)
                 {
-                    Debug.Log("Gesto 'Salir' detectado.");
+                    // Debug.Log("Gesto 'Salir' detectado.");
                     mainMenuController.OnQuitClicked();
                 }
             }

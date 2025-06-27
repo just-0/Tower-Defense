@@ -66,10 +66,13 @@ class FingerCounter:
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_drawing_styles = mp.solutions.drawing_styles
         
+        # Objeto CLAHE para mejora de contraste, se crea una vez para eficiencia
+        self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        
         # Configuración mejorada de MediaPipe Hands
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
-            max_num_hands=2,
+            max_num_hands=1,
             model_complexity=1,  # Modelo más preciso (0-simple, 1-completo)
             min_detection_confidence=0.6,
             min_tracking_confidence=0.6
@@ -87,8 +90,6 @@ class FingerCounter:
         # Variables para seguimiento de dedos
         self.finger_count = 0
         self.hand_detected = False
-        self.left_hand_detected = False
-        self.right_hand_detected = False
         
         # Filtrado temporal (estabilizador)
         self.history_length = 5
@@ -262,6 +263,24 @@ class FingerCounter:
                 print(f"Error en hilo de cámara: {str(e)}")
                 time.sleep(0.1)  # Evitar bucle de error rápido
     
+    def _preprocess_frame(self, frame):
+        """
+        Aplica mejoras de contraste al frame para optimizar la detección con poca luz.
+        También estandariza el pipeline de color para evitar tintes azules.
+        """
+        # Convertir a espacio de color LAB que separa luminosidad de color
+        lab_image = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        l_channel, a_channel, b_channel = cv2.split(lab_image)
+        
+        # Aplicar CLAHE solo al canal de luminosidad (L)
+        l_channel_eq = self.clahe.apply(l_channel)
+        
+        # Unir canales y convertir de vuelta a BGR
+        updated_lab_image = cv2.merge((l_channel_eq, a_channel, b_channel))
+        processed_frame = cv2.cvtColor(updated_lab_image, cv2.COLOR_LAB2BGR)
+        
+        return processed_frame
+
     def _calculate_angle(self, p1, p2, p3):
         """
         Calcula el ángulo entre tres puntos.
@@ -293,63 +312,44 @@ class FingerCounter:
         
         return angle
     
-    def _is_thumb_raised(self, landmarks, is_left_hand):
+    def _is_thumb_raised(self, landmarks):
         """
-        Determina si el pulgar está levantado usando ángulos entre articulaciones.
-        
-        Args:
-            landmarks: Puntos de referencia de MediaPipe
-            is_left_hand: Si es la mano izquierda
-            
-        Returns:
-            bool: True si el pulgar está levantado
+        Determina si el pulgar está levantado de una forma más robusta,
+        comparando su distancia a la base del dedo índice.
         """
-        # Puntos clave del pulgar
-        cmc = landmarks[1]    # Articulación carpo-metacarpiana
-        mcp = landmarks[2]    # Articulación metacarpo-falángica 
-        ip = landmarks[3]     # Articulación interfalángica
-        tip = landmarks[4]    # Punta del pulgar
-        wrist = landmarks[0]  # Muñeca
+        # Puntos clave
+        thumb_tip = landmarks[4]
+        thumb_mcp = landmarks[2] # nudillo base del pulgar
+        index_mcp = landmarks[5] # nudillo base del índice
         
-        # Calcular ángulo principal para el pulgar
-        angle = self._calculate_angle(wrist, cmc, tip)
+        # El pulgar se considera "fuera" si su punta está más lejos de la palma 
+        # (representada por el índice) que su propia base.
+        dist_tip_to_index = math.hypot(thumb_tip.x - index_mcp.x, thumb_tip.y - index_mcp.y)
+        dist_mcp_to_index = math.hypot(thumb_mcp.x - index_mcp.x, thumb_mcp.y - index_mcp.y)
         
-        # Diferentes umbrales basados en si es mano izquierda o derecha
-        threshold = self.thumb_angle_threshold
-        
-        # Comprobar si el pulgar está extendido usando el ángulo
-        if angle > threshold:
-            # Verificación posicional adicional (dependiendo de la orientación de la mano)
-            if (is_left_hand and tip.x > mcp.x) or (not is_left_hand and tip.x < mcp.x):
-                return True
-                
-        return False
-    
-    def _is_finger_raised(self, landmarks, base_idx, mid_idx, tip_idx):
+        return dist_tip_to_index > dist_mcp_to_index
+
+    def _is_finger_raised(self, landmarks, wrist_landmark, mcp_idx, pip_idx, tip_idx):
         """
-        Determina si un dedo está levantado usando la posición relativa.
-        
-        Args:
-            landmarks: Puntos de referencia de MediaPipe
-            base_idx: Índice de la base del dedo
-            mid_idx: Índice de la articulación media
-            tip_idx: Índice de la punta del dedo
-            
-        Returns:
-            bool: True si el dedo está levantado
+        Determina si un dedo está levantado de forma robusta, independientemente de la orientación.
+        Un dedo está levantado si está (1) recto y (2) su punta está más alejada de la muñeca que su nudillo.
         """
-        base = landmarks[base_idx]
-        mid = landmarks[mid_idx]
+        # Puntos clave
         tip = landmarks[tip_idx]
+        pip = landmarks[pip_idx] # Articulación media (interfalángica proximal)
+        mcp = landmarks[mcp_idx] # Nudillo (metacarpofalángica)
+
+        # 1. Comprobar si el dedo está relativamente recto.
+        is_straight = self._calculate_angle(mcp, pip, tip) > 150.0
+
+        # 2. Comprobar si la punta del dedo está más alejada de la muñeca que la articulación media.
+        #    Esto evita contar dedos que están doblados hacia la palma.
+        dist_tip_wrist = math.hypot(tip.x - wrist_landmark.x, tip.y - wrist_landmark.y)
+        dist_pip_wrist = math.hypot(pip.x - wrist_landmark.x, pip.y - wrist_landmark.y)
         
-        # Comprobar si la punta está más alta que la base (eje Y invertido)
-        finger_raised = tip.y < base.y
+        is_away_from_palm = dist_tip_wrist > dist_pip_wrist
         
-        # Verificar que el dedo está realmente extendido, no doblado
-        extended = self._calculate_angle(base, mid, tip) > 160
-        
-        # El dedo está levantado si la punta está sobre la base y el dedo está extendido
-        return finger_raised and extended
+        return is_straight and is_away_from_palm
     
     def _detect_hand_orientation(self, landmarks):
         """
@@ -386,75 +386,49 @@ class FingerCounter:
         
         # Reiniciar estado de detección
         self.hand_detected = False
-        self.left_hand_detected = False
-        self.right_hand_detected = False
         
         if results.multi_hand_landmarks:
             self.hand_detected = True
             
-            for hand_idx, hand_landmarks in enumerate(results.multi_hand_landmarks):
-                # Determinar si es mano izquierda o derecha
-                if results.multi_handedness:
-                    if hand_idx < len(results.multi_handedness):
-                        handedness = results.multi_handedness[hand_idx]
-                        is_left = "Left" in handedness.classification[0].label
-                    else:
-                        # Hacer una determinación basada en los landmarks si MediaPipe no proporciona la información
-                        is_left = self._detect_hand_orientation(hand_landmarks.landmark)
-                else:
-                    is_left = self._detect_hand_orientation(hand_landmarks.landmark)
-                
-                if is_left:
-                    self.left_hand_detected = True
-                else:
-                    self.right_hand_detected = True
-                
-                # Obtener landmarks
-                landmarks = hand_landmarks.landmark
-                
-                # Comprobar el pulgar (método mejorado)
-                if self._is_thumb_raised(landmarks, is_left):
+            # Como solo procesamos una mano, tomamos la primera y única detectada
+            hand_landmarks = results.multi_hand_landmarks[0]
+            
+            # Obtener landmarks y muñeca
+            landmarks = hand_landmarks.landmark
+            wrist = landmarks[0]
+            
+            # Comprobar el pulgar (método mejorado)
+            if self._is_thumb_raised(landmarks):
+                finger_count += 1
+            
+            # Comprobar otros dedos con el método robusto
+            finger_indices = [
+                (5, 6, 8),    # Índice: mcp, pip, tip
+                (9, 10, 12),  # Medio: mcp, pip, tip
+                (13, 14, 16), # Anular: mcp, pip, tip
+                (17, 18, 20)  # Meñique: mcp, pip, tip
+            ]
+            
+            for mcp, pip, tip in finger_indices:
+                if self._is_finger_raised(landmarks, wrist, mcp, pip, tip):
                     finger_count += 1
-                
-                # Comprobar otros dedos
-                finger_indices = [
-                    (5, 6, 8),    # Índice: base, medio, punta
-                    (9, 10, 12),  # Medio: base, medio, punta
-                    (13, 14, 16), # Anular: base, medio, punta
-                    (17, 18, 20)  # Meñique: base, medio, punta
-                ]
-                
-                for base, mid, tip in finger_indices:
-                    if self._is_finger_raised(landmarks, base, mid, tip):
-                        finger_count += 1
-                
-                # Dibujar landmarks y añadir información visual en modo depuración
-                if self.debug_mode and debug_frame is not None:
-                    # Dibujar landmarks
-                    self.mp_drawing.draw_landmarks(
-                        debug_frame,
-                        hand_landmarks,
-                        self.mp_hands.HAND_CONNECTIONS,
-                        self.mp_drawing_styles.get_default_hand_landmarks_style(),
-                        self.mp_drawing_styles.get_default_hand_connections_style()
-                    )
-                    
-                    # Añadir texto de handedness
-                    hand_text = "Izquierda" if is_left else "Derecha"
-                    cv2.putText(debug_frame, hand_text, 
-                               (int(landmarks[0].x * w), int(landmarks[0].y * h - 20)),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+            
+            # Dibujar landmarks y añadir información visual en modo depuración
+            if self.debug_mode and debug_frame is not None:
+                # Dibujar landmarks
+                self.mp_drawing.draw_landmarks(
+                    debug_frame,
+                    hand_landmarks,
+                    self.mp_hands.HAND_CONNECTIONS,
+                    self.mp_drawing_styles.get_default_hand_landmarks_style(),
+                    self.mp_drawing_styles.get_default_hand_connections_style()
+                )
             
             # Crear un frame procesado simple con el conteo de dedos
             processed_frame = np.zeros((h, w, 3), dtype=np.uint8)
             cv2.putText(processed_frame, f"Dedos: {finger_count}", (w//2-100, h//2),
                        cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 3)
-            
-            # Si se detectaron ambas manos, mostrar esa información
-            if self.left_hand_detected and self.right_hand_detected:
-                cv2.putText(processed_frame, "Ambas manos detectadas", (w//2-150, h//2+50),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-        
+
         return finger_count, processed_frame
     
     def _get_stable_finger_count(self):

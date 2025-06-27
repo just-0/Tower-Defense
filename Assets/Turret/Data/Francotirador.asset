@@ -17,9 +17,9 @@ MonoBehaviour:
   projectilePrefab: {fileID: 1627521441993660, guid: f22ce32f9463a923795832db143c3747, type: 3}
   cost: 200
   level: 1
-  fireRate: 0.5
-  range: 30
-  damage: 120
+  fireRate: 1
+  range: 7
+  damage: 40
   isExplosive: 0
   explosionRadius: 2
   placementEffect: {fileID: 0}

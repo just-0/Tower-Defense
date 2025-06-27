@@ -59,6 +59,15 @@ public class Projectile : MonoBehaviour
                 {
                     monster.TakeDamage(damage);
                 }
+                else
+                {
+                    // Intentar dañar a un monstruo de tutorial si el normal no existe
+                    TutorialMonster tutorialMonster = target.GetComponent<TutorialMonster>();
+                    if (tutorialMonster != null)
+                    {
+                        tutorialMonster.TakeDamage(damage);
+                    }
+                }
             }
         }
         
@@ -75,6 +84,15 @@ public class Projectile : MonoBehaviour
             {
                 // Opcional: podrías hacer que el daño disminuya con la distancia al centro
                 monster.TakeDamage(damage);
+            }
+            else
+            {
+                // Intentar dañar a un monstruo de tutorial si el normal no existe
+                TutorialMonster tutorialMonster = collider.GetComponent<TutorialMonster>();
+                if (tutorialMonster != null)
+                {
+                    tutorialMonster.TakeDamage(damage);
+                }
             }
         }
     }

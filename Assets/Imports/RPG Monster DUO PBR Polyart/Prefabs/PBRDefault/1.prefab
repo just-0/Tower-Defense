@@ -514,7 +514,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   maxHealth: 100
   currentHealth: 0
-  moveSpeed: 1
+  moveSpeed: 0.5
   goldReward: 10
   damageToBase: 10
   modelPrefab: {fileID: 0}

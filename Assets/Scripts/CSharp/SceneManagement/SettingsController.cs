@@ -17,7 +17,7 @@ public class SettingsController : MonoBehaviour
     public void SetAvailableCameras(List<int> indices)
     {
         availableCameraIndices = indices.OrderBy(i => i).ToList();
-        Debug.Log($"Configuración actualizada con cámaras: {string.Join(", ", availableCameraIndices)}");
+        // Debug.Log($"Configuración actualizada con cámaras: {string.Join(", ", availableCameraIndices)}");
 
         if (availableCameraIndices.Count > 0)
         {

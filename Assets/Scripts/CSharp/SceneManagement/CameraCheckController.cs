@@ -35,7 +35,7 @@ public class CameraCheckController : MonoBehaviour
         websocket = new WebSocket(ServerUrl);
 
         websocket.OnOpen += () => {
-            Debug.Log("Conexión abierta con el backend. Esperando estado de la cámara...");
+            // Debug.Log("Conexión abierta con el backend. Esperando estado de la cámara...");
             statusText.text = "Conexión exitosa. Verificando cámara...";
         };
         

@@ -23,7 +23,7 @@ public class Turret : MonoBehaviour
     {
         turretData = data;
         // La configuración del SphereCollider ya no es necesaria, la detección es activa
-        Debug.Log($"<color=cyan>--- INICIALIZANDO TORRETA ACTIVA: {turretData.turretName} ---</color>");
+        // Debug.Log($"<color=cyan>--- INICIALIZANDO TORRETA ACTIVA: {turretData.turretName} ---</color>");
 
         if (partToRotate == null)
         {
@@ -93,7 +93,7 @@ public class Turret : MonoBehaviour
                 target = nearestMonster;
                 // ...reiniciamos el contador para simular un tiempo de "fijar blanco".
                 fireCountdown = 1f / turretData.fireRate;
-                Debug.Log($"<color=green>Nuevo objetivo adquirido: {target.name} a {shortestDistance}m</color>");
+                // Debug.Log($"<color=green>Nuevo objetivo adquirido: {target.name} a {shortestDistance}m</color>");
             }
         }
         else
@@ -140,7 +140,7 @@ public class Turret : MonoBehaviour
     {
         if (turretData.projectilePrefab == null || firePoint == null)
         {
-            Debug.LogWarning($"{turretData.turretName}: No se puede disparar. Falta prefab de proyectil o firePoint.");
+            // Debug.LogWarning($"{turretData.turretName}: No se puede disparar. Falta prefab de proyectil o firePoint.");
             return;
         }
 
@@ -153,7 +153,7 @@ public class Turret : MonoBehaviour
         }
         else
         {
-            Debug.LogWarning($"El prefab {turretData.projectilePrefab.name} no tiene un componente Projectile.");
+            // Debug.LogWarning($"El prefab {turretData.projectilePrefab.name} no tiene un componente Projectile.");
         }
 
         // Efectos visuales y de sonido de disparo

@@ -59,13 +59,13 @@ public class InitialSceneLoader : MonoBehaviour
     
     public void LoadCameraVerificationScene()
     {
-        Debug.Log("Cargando escena de verificación de cámaras...");
+        // Debug.Log("Cargando escena de verificación de cámaras...");
         SceneManager.LoadScene(cameraVerificationSceneName);
     }
     
     public void LoadMainGameScene()
     {
-        Debug.Log("Cargando escena principal del juego...");
+        // Debug.Log("Cargando escena principal del juego...");
         SceneManager.LoadScene(mainGameSceneName);
     }
     
