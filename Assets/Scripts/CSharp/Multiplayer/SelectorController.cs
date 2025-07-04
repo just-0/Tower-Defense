@@ -48,11 +48,10 @@ public class SelectorController : MonoBehaviour
         
         UpdateStatus("Connecting to Photon...");
 
-        // Esperar a que la instancia esté lista
+        // Esperar a que PhotonManager esté listo
         if (PhotonManager.Instance != null)
         {
             PhotonManager.Instance.OnJoinedRoomEvent += OnJoinedPhotonRoom;
-            // Ya no nos suscribimos a los eventos de progreso aquí. LoadingManager se encargará.
         }
         else
         {
@@ -133,8 +132,11 @@ public class SelectorController : MonoBehaviour
             if (currentFingerCount >= 1 && currentFingerCount <= 3)
             {
                 int weaponIndex = currentFingerCount - 1;
-                PhotonManager.Instance.SendTurretSelect(weaponIndex);
-                UpdateStatus($"Sent: Select Turret {currentFingerCount}");
+                if (PhotonManager.Instance != null)
+                {
+                    PhotonManager.Instance.SendTurretSelect(weaponIndex);
+                    UpdateStatus($"Sent: Select Turret {currentFingerCount}");
+                }
                 
                 // Actualizar UI del selector para mostrar arma seleccionada
                 if (SelectorGameUI.Instance != null)
@@ -185,9 +187,11 @@ public class SelectorController : MonoBehaviour
 
     private void SendCommand(string command)
     {
-        // Ya no mostramos la pantalla de carga aquí, se hace en HandleGestureLogic
-        PhotonManager.Instance.SendPhaseChange(command);
-        UpdateStatus($"Sent Command: {command}");
+        if (PhotonManager.Instance != null)
+        {
+            PhotonManager.Instance.SendPhaseChange(command);
+            UpdateStatus($"Sent Command: {command}");
+        }
 
         // Change local state after sending command
         if (command == "START_COMBAT") 

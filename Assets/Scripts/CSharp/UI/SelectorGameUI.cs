@@ -1,10 +1,11 @@
 using UnityEngine;
 using UnityEngine.UI;
-using TMPro;
+// TMPro removido ya que no se usa en el código
 
 /// <summary>
 /// Maneja la UI del juego para el jugador Selector en modo multijugador.
 /// Recibe actualizaciones del estado del juego desde el Colocador via Photon.
+/// Se configura automáticamente si no se asignan los elementos manualmente.
 /// </summary>
 public class SelectorGameUI : MonoBehaviour
 {
@@ -37,6 +38,9 @@ public class SelectorGameUI : MonoBehaviour
     [SerializeField] private GameObject combatPhasePanel;
     [SerializeField] private Text phaseText;
     
+    [Header("Auto Configuration")]
+    [SerializeField] private bool autoFindUIElements = true;
+    
     // Estado del juego
     private int currentGold = 0;
     private int currentWave = 1;
@@ -61,6 +65,12 @@ public class SelectorGameUI : MonoBehaviour
     
     void Start()
     {
+        // Auto-buscar elementos de UI si están marcados para ello
+        if (autoFindUIElements)
+        {
+            AutoFindUIElements();
+        }
+        
         // Suscribirse a eventos de PhotonManager
         if (PhotonManager.Instance != null)
         {
@@ -70,6 +80,7 @@ public class SelectorGameUI : MonoBehaviour
             PhotonManager.Instance.OnBaseDestroyedReceived += ShowGameOver;
             PhotonManager.Instance.OnMonsterDeathReceived += OnMonsterDeath;
             PhotonManager.Instance.OnTurretInfoReceived += UpdateTurretInfo;
+            Debug.Log("[SelectorGameUI] Suscrito a eventos de PhotonManager");
         }
         else
         {
@@ -78,6 +89,65 @@ public class SelectorGameUI : MonoBehaviour
         
         // Inicializar UI
         InitializeUI();
+    }
+    
+    private void AutoFindUIElements()
+    {
+        // Buscar elementos de texto por nombre común
+        Text[] allTexts = GetComponentsInChildren<Text>(true);
+        foreach (Text text in allTexts)
+        {
+            string name = text.gameObject.name.ToLower();
+            
+            if (name.Contains("gold") || name.Contains("oro"))
+                goldText = text;
+            else if (name.Contains("wave") || name.Contains("oleada"))
+                waveText = text;
+            else if (name.Contains("health") || name.Contains("vida") || name.Contains("salud"))
+                healthText = text;
+            else if (name.Contains("turret") && name.Contains("name"))
+                turretNameText = text;
+            else if (name.Contains("turret") && name.Contains("cost"))
+                turretCostText = text;
+            else if (name.Contains("turret") && name.Contains("damage"))
+                turretDamageText = text;
+            else if (name.Contains("turret") && name.Contains("range"))
+                turretRangeText = text;
+            else if (name.Contains("turret") && name.Contains("level"))
+                turretLevelText = text;
+            else if (name.Contains("phase") || name.Contains("fase"))
+                phaseText = text;
+            else if (name.Contains("gameover"))
+                gameOverText = text;
+        }
+        
+        // Buscar elementos de imagen y paneles
+        Image[] allImages = GetComponentsInChildren<Image>(true);
+        foreach (Image img in allImages)
+        {
+            string name = img.gameObject.name.ToLower();
+            if (name.Contains("health") && name.Contains("fill"))
+                healthBarFill = img;
+        }
+        
+        // Buscar paneles
+        Transform[] allTransforms = GetComponentsInChildren<Transform>(true);
+        foreach (Transform t in allTransforms)
+        {
+            string name = t.gameObject.name.ToLower();
+            if (name.Contains("turret") && name.Contains("info"))
+                turretInfoPanel = t.gameObject;
+            else if (name.Contains("weapon") && name.Contains("selection"))
+                weaponSelectionPanel = t.gameObject;
+            else if (name.Contains("planning") && name.Contains("phase"))
+                planningPhasePanel = t.gameObject;
+            else if (name.Contains("combat") && name.Contains("phase"))
+                combatPhasePanel = t.gameObject;
+            else if (name.Contains("gameover"))
+                gameOverPanel = t.gameObject;
+        }
+        
+        Debug.Log("[SelectorGameUI] Auto-configuración de UI completada");
     }
     
     private void InitializeUI()
@@ -93,6 +163,8 @@ public class SelectorGameUI : MonoBehaviour
         {
             gameOverPanel.SetActive(false);
         }
+        
+        Debug.Log("[SelectorGameUI] UI inicializada correctamente");
     }
     
     // --- MÉTODOS DE ACTUALIZACIÓN DE UI ---
@@ -101,6 +173,7 @@ public class SelectorGameUI : MonoBehaviour
     {
         currentGold = newGold;
         UpdateGoldDisplay();
+        Debug.Log($"[SelectorGameUI] Oro actualizado: {newGold}");
     }
     
     private void UpdateHealth(int health, int maxHp)
@@ -108,12 +181,14 @@ public class SelectorGameUI : MonoBehaviour
         currentHealth = health;
         maxHealth = maxHp;
         UpdateHealthDisplay();
+        Debug.Log($"[SelectorGameUI] Salud actualizada: {health}/{maxHp}");
     }
     
     private void UpdateWave(int wave)
     {
         currentWave = wave;
         UpdateWaveDisplay();
+        Debug.Log($"[SelectorGameUI] Oleada actualizada: {wave}");
     }
     
     private void UpdateTurretInfo(string name, int cost, float damage, float range, int level)
@@ -129,6 +204,8 @@ public class SelectorGameUI : MonoBehaviour
         {
             turretInfoPanel.SetActive(true);
         }
+        
+        Debug.Log($"[SelectorGameUI] Info de torreta actualizada: {name}");
     }
     
     // --- MÉTODOS DE VISUALIZACIÓN ---
@@ -137,7 +214,7 @@ public class SelectorGameUI : MonoBehaviour
     {
         if (goldText != null)
         {
-            goldText.text = $"Oro: {currentGold}";
+            goldText.text = $"💰 Oro: {currentGold}";
         }
     }
     
@@ -145,7 +222,7 @@ public class SelectorGameUI : MonoBehaviour
     {
         if (waveText != null)
         {
-            waveText.text = $"Oleada: {currentWave}";
+            waveText.text = $"🌊 Oleada: {currentWave}";
         }
     }
     
@@ -153,7 +230,7 @@ public class SelectorGameUI : MonoBehaviour
     {
         if (healthText != null)
         {
-            healthText.text = $"Base: {currentHealth}/{maxHealth}";
+            healthText.text = $"🏠 Base: {currentHealth}/{maxHealth}";
         }
         
         if (healthBarFill != null)
@@ -193,6 +270,7 @@ public class SelectorGameUI : MonoBehaviour
         {
             selectedWeaponIndex = weaponIndex;
             UpdateWeaponSelection();
+            Debug.Log($"[SelectorGameUI] Arma seleccionada: {weaponIndex + 1}");
         }
     }
     
@@ -217,15 +295,16 @@ public class SelectorGameUI : MonoBehaviour
         
         if (phaseText != null)
         {
-            phaseText.text = combatPhase ? "FASE: COMBATE" : "FASE: PLANIFICACIÓN";
+            phaseText.text = combatPhase ? "⚔️ FASE: COMBATE" : "🛠️ FASE: PLANIFICACIÓN";
         }
+        
+        Debug.Log($"[SelectorGameUI] Fase cambiada a: {(combatPhase ? "Combate" : "Planificación")}");
     }
     
     // --- EVENTOS DEL JUEGO ---
     
     private void OnMonsterDeath()
     {
-        // Podemos agregar efectos visuales aquí, como animaciones o sonidos
         Debug.Log("[SelectorGameUI] Monstruo eliminado - Oro actualizado");
     }
     
@@ -238,10 +317,47 @@ public class SelectorGameUI : MonoBehaviour
         
         if (gameOverText != null)
         {
-            gameOverText.text = "¡GAME OVER!\nLa base ha sido destruida";
+            gameOverText.text = "💀 ¡GAME OVER!\nLa base ha sido destruida";
         }
         
         Debug.Log("[SelectorGameUI] Game Over mostrado");
+    }
+    
+    // --- MÉTODOS PÚBLICOS PARA CONFIGURACIÓN MANUAL ---
+    
+    [System.Obsolete("Use SetupUI() method instead")]
+    public void ConfigureUI(Text gold, Text wave, Text health, Image healthBar, 
+                          Text turretName, Text turretCost, Text turretDamage, Text turretRange, Text turretLevel,
+                          GameObject turretPanel, Image[] weapons, GameObject weaponPanel,
+                          GameObject gameOverPnl, Text gameOverTxt, Text phaseTxt)
+    {
+        SetupUI(gold, wave, health, healthBar, turretName, turretCost, turretDamage, turretRange, turretLevel,
+               turretPanel, weapons, weaponPanel, gameOverPnl, gameOverTxt, phaseTxt);
+    }
+    
+    public void SetupUI(Text gold, Text wave, Text health, Image healthBar, 
+                       Text turretName, Text turretCost, Text turretDamage, Text turretRange, Text turretLevel,
+                       GameObject turretPanel, Image[] weapons, GameObject weaponPanel,
+                       GameObject gameOverPnl, Text gameOverTxt, Text phaseTxt)
+    {
+        goldText = gold;
+        waveText = wave;
+        healthText = health;
+        healthBarFill = healthBar;
+        turretNameText = turretName;
+        turretCostText = turretCost;
+        turretDamageText = turretDamage;
+        turretRangeText = turretRange;
+        turretLevelText = turretLevel;
+        turretInfoPanel = turretPanel;
+        weaponIcons = weapons;
+        weaponSelectionPanel = weaponPanel;
+        gameOverPanel = gameOverPnl;
+        gameOverText = gameOverTxt;
+        phaseText = phaseTxt;
+        
+        InitializeUI();
+        Debug.Log("[SelectorGameUI] UI configurada manualmente");
     }
     
     // --- GETTERS PARA INFORMACIÓN ACTUAL ---
@@ -267,5 +383,12 @@ public class SelectorGameUI : MonoBehaviour
             PhotonManager.Instance.OnMonsterDeathReceived -= OnMonsterDeath;
             PhotonManager.Instance.OnTurretInfoReceived -= UpdateTurretInfo;
         }
+        
+        if (Instance == this)
+        {
+            Instance = null;
+        }
+        
+        Debug.Log("[SelectorGameUI] Cleanup completado");
     }
 } 

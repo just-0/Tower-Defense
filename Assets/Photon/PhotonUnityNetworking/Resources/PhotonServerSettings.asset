@@ -46,6 +46,13 @@ MonoBehaviour:
   - RPC_ReceiveTurretSelect
   - RPC_ReceiveProgressUpdate
   - RPC_ReceiveSamComplete
+  - RPC_ReceiveError
+  - RPC_ReceiveBaseDestroyed
+  - RPC_ReceiveGoldUpdate
+  - RPC_ReceiveHealthUpdate
+  - RPC_ReceiveMonsterDeath
+  - RPC_ReceiveTurretInfo
+  - RPC_ReceiveWaveUpdate
   DisableAutoOpenWizard: 1
   ShowSettings: 0
   DevRegionSetOnce: 1
