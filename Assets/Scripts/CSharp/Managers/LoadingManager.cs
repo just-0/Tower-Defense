@@ -46,6 +46,11 @@ public class LoadingManager : MonoBehaviour
     private GameObject currentLoadingScreen;
     private TextMeshProUGUI loadingText;
     private TextMeshProUGUI progressText; // Ya no es [SerializeField]
+    
+    // Timeout para evitar pantallas de carga colgadas
+    private float loadingTimeout = 30f; // 30 segundos de timeout
+    private float loadingStartTime;
+    private bool isWaitingForRemoteUpdate = false;
 
     private void Awake()
     {
@@ -67,7 +72,7 @@ public class LoadingManager : MonoBehaviour
         var photonManager = PhotonManager.Instance;
         if (photonManager != null)
         {
-            Debug.Log("[LoadingManager] Suscribiéndose a eventos de PhotonManager...");
+            Debug.Log("[LoadingManager] 📡 Suscribiéndose a eventos de PhotonManager...");
             // No queremos que el MasterClient (Colocador) reciba sus propios eventos de vuelta
             // La lógica de RPC con RpcTarget.Others ya lo previene, pero esta es una capa extra de seguridad.
             // Nos suscribimos para que el cliente (Selector) pueda mostrar el progreso.
@@ -75,10 +80,34 @@ public class LoadingManager : MonoBehaviour
             photonManager.OnSamProcessingComplete += HandleRemoteSamComplete;
             photonManager.OnErrorReceived += HandleRemoteError;
             Debug.Log("[LoadingManager] ✅ Suscripción a eventos de PhotonManager completada.");
+            
+            // Verificar estado de conexión
+            if (photonManager.IsConnectedToRoom())
+            {
+                Debug.Log($"[LoadingManager] 🌐 Conectado a sala multijugador. MasterClient: {photonManager.IsMasterClient()}");
+            }
+            else
+            {
+                Debug.Log("[LoadingManager] 📴 No conectado a sala multijugador - modo single player");
+            }
         }
         else
         {
-            Debug.LogWarning("[LoadingManager] PhotonManager.Instance es null, no se pueden suscribir eventos remotos.");
+            Debug.LogWarning("[LoadingManager] ⚠️ PhotonManager.Instance es null, no se pueden suscribir eventos remotos.");
+        }
+    }
+
+    private void Update()
+    {
+        // Verificar timeout para evitar pantallas de carga colgadas
+        if (isWaitingForRemoteUpdate && currentLoadingScreen != null)
+        {
+            if (Time.time - loadingStartTime > loadingTimeout)
+            {
+                Debug.LogWarning($"[LoadingManager] ⏰ Timeout de {loadingTimeout}s alcanzado. Ocultando pantalla automáticamente.");
+                ShowErrorTemporarily("Timeout: No se recibió respuesta del servidor", 3f);
+                isWaitingForRemoteUpdate = false;
+            }
         }
     }
 
@@ -98,23 +127,28 @@ public class LoadingManager : MonoBehaviour
     private void HandleRemoteProgressUpdate(string step, float progress)
     {
         // Este método es llamado en el cliente Selector cuando el Colocador envía una actualización.
-        Debug.Log($"[LoadingManager] Recibida actualización remota de progreso: {step} - {progress}%");
+        Debug.Log($"[LoadingManager] 📊 Recibida actualización remota de progreso: {step} - {progress:F1}%");
         
         // IMPORTANTE: Si el progreso es 100%, significa que el proceso terminó.
-        // No debemos volver a mostrar la pantalla de carga si ya se ocultó.
-        if (progress >= 100f && currentLoadingScreen == null)
+        if (progress >= 100f)
         {
-            Debug.Log("[LoadingManager] ⚠️ Progreso al 100% recibido pero pantalla ya oculta. Ignorando para evitar mostrarla de nuevo.");
+            Debug.Log("[LoadingManager] ✅ Progreso al 100% recibido - Finalizando automáticamente...");
+            // Auto-ocultar cuando llegue al 100%
+            Hide();
             return;
         }
         
-        // Asegurarse de que la pantalla de carga se muestre si aún no lo está (solo si progreso < 100%)
-        if (currentLoadingScreen == null && progress < 100f)
+        // Asegurarse de que la pantalla de carga se muestre si aún no lo está
+        if (currentLoadingScreen == null)
         {
+            Debug.Log("[LoadingManager] 🔄 Mostrando pantalla de carga para sincronización...");
             Show("Sincronizando con el anfitrión...", true);
+            // Marcar que estamos esperando actualizaciones remotas
+            isWaitingForRemoteUpdate = true;
+            loadingStartTime = Time.time;
         }
         
-        // Solo actualizar si la pantalla está visible
+        // Actualizar progreso
         if (currentLoadingScreen != null)
         {
             UpdateProgress(step, progress);
@@ -124,16 +158,41 @@ public class LoadingManager : MonoBehaviour
     private void HandleRemoteSamComplete()
     {
         // Este método es llamado en el cliente Selector cuando el Colocador ha terminado el proceso SAM.
-        Debug.Log("[LoadingManager] ✅ HandleRemoteSamComplete ejecutado - Recibida notificación remota de finalización. Ocultando pantalla...");
-        Hide();
-        Debug.Log("[LoadingManager] ✅ Pantalla de carga ocultada exitosamente en el Selector.");
+        Debug.Log("[LoadingManager] 🎉 HandleRemoteSamComplete ejecutado - Recibida notificación remota de finalización.");
+        
+        // Limpiar el flag de espera remota primero
+        isWaitingForRemoteUpdate = false;
+        
+        // Asegurar que se oculte la pantalla
+        if (currentLoadingScreen != null)
+        {
+            Debug.Log("[LoadingManager] ✅ Ocultando pantalla de carga...");
+            Hide();
+            Debug.Log("[LoadingManager] ✅ Pantalla de carga ocultada exitosamente en el Selector.");
+        }
+        else
+        {
+            Debug.Log("[LoadingManager] ⚠️ HandleRemoteSamComplete llamado pero no hay pantalla de carga visible.");
+        }
     }
 
     private void HandleRemoteError(string errorMessage, string errorCode)
     {
         // Este método es llamado cuando se recibe un error desde el servidor remoto.
-        Debug.Log($"[LoadingManager] Error remoto recibido: {errorCode} - {errorMessage}");
+        Debug.Log($"[LoadingManager] ❌ Error remoto recibido: {errorCode} - {errorMessage}");
         ShowErrorTemporarily(errorMessage, 3f);
+        
+        // Limpiar el estado de espera remota
+        isWaitingForRemoteUpdate = false;
+    }
+
+    /// <summary>
+    /// Verifica si estamos en modo Selector (no MasterClient) en una sesión multijugador
+    /// </summary>
+    private bool IsSelector()
+    {
+        var photonManager = PhotonManager.Instance;
+        return photonManager != null && photonManager.IsConnectedToRoom() && !photonManager.IsMasterClient();
     }
 
     /// <summary>
@@ -222,6 +281,14 @@ public class LoadingManager : MonoBehaviour
         {
             Debug.LogWarning("LoadingManager: No se encontró un objeto de texto llamado 'ProgressText' en el prefab de la pantalla de carga.");
         }
+        
+        // Si somos el Selector, activar timeout automáticamente
+        if (IsSelector() && showProgress)
+        {
+            Debug.Log("[LoadingManager] 🎯 Modo Selector detectado - Activando timeout automático");
+            isWaitingForRemoteUpdate = true;
+            loadingStartTime = Time.time;
+        }
     }
 
     /// <summary>
@@ -261,6 +328,10 @@ public class LoadingManager : MonoBehaviour
         {
             Debug.LogWarning("[LoadingManager] Hide() llamado pero currentLoadingScreen ya es null.");
         }
+        
+        // Limpiar variables de timeout
+        isWaitingForRemoteUpdate = false;
+        loadingStartTime = 0f;
     }
 
     /// <summary>
@@ -312,5 +383,31 @@ public class LoadingManager : MonoBehaviour
         {
             loadingText.color = UnityEngine.Color.white;
         }
+    }
+
+    // Métodos de debug
+    [ContextMenu("Debug: Mostrar Estado")]
+    public void DebugShowState()
+    {
+        Debug.Log($"[LoadingManager] 🔍 Estado actual:");
+        Debug.Log($"   📺 Pantalla visible: {currentLoadingScreen != null}");
+        Debug.Log($"   ⏰ Esperando remoto: {isWaitingForRemoteUpdate}");
+        Debug.Log($"   🎯 Es Selector: {IsSelector()}");
+        Debug.Log($"   ⏱️ Tiempo desde inicio: {(isWaitingForRemoteUpdate ? Time.time - loadingStartTime : 0):F1}s");
+        Debug.Log($"   🚨 Timeout configurado: {loadingTimeout}s");
+    }
+
+    [ContextMenu("Debug: Forzar Ocultar")]
+    public void DebugForceHide()
+    {
+        Debug.Log("[LoadingManager] 🛠️ Forzando ocultar pantalla de carga...");
+        Hide();
+    }
+
+    [ContextMenu("Debug: Simular Timeout")]
+    public void DebugSimulateTimeout()
+    {
+        Debug.Log("[LoadingManager] 🧪 Simulando timeout...");
+        ShowErrorTemporarily("Debug: Timeout simulado", 3f);
     }
 } 

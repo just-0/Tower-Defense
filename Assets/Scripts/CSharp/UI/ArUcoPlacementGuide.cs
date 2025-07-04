@@ -16,7 +16,7 @@ public class ArUcoPlacementGuide : MonoBehaviour
     [SerializeField] private float pulseIntensity = 0.3f;
     
     [Header("Área de Colocación")]
-    [SerializeField] private Vector2 guideSize = new Vector2(400, 300); // Tamaño del rectángulo guía
+    [SerializeField] private Vector2 guideSize = new Vector2(800, 300); // Tamaño del rectángulo guía (más ancho)
     [SerializeField] private Vector2 guidePosition = new Vector2(0, 0); // Posición relativa al centro
     
     [Header("Textos Informativos")]

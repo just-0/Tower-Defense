@@ -324,16 +324,17 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             // Notificar a otros jugadores que el procesamiento ha terminado.
             if (photonManager != null && photonManager.IsMasterClient())
             {
-                Debug.Log("[SAMSystemController] Enviando BroadcastSamComplete() a otros jugadores...");
+                Debug.Log("[SAMSystemController] 🎉 Enviando BroadcastSamComplete() a otros jugadores...");
                 photonManager.BroadcastSamComplete();
+                Debug.Log("[SAMSystemController] ✅ BroadcastSamComplete() enviado exitosamente");
             }
             else if (photonManager == null)
             {
-                Debug.LogWarning("[SAMSystemController] photonManager es null, no se puede enviar BroadcastSamComplete");
+                Debug.LogWarning("[SAMSystemController] ⚠️ photonManager es null, no se puede enviar BroadcastSamComplete");
             }
             else if (!photonManager.IsMasterClient())
             {
-                Debug.LogWarning("[SAMSystemController] No es MasterClient, no se envía BroadcastSamComplete");
+                Debug.LogWarning("[SAMSystemController] ⚠️ No es MasterClient, no se envía BroadcastSamComplete");
             }
             
             // Resetear el estado de procesamiento para permitir nuevos intentos
@@ -399,12 +400,18 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
 
     private void HandleProgressUpdate(byte[] messageData)
     {
-        if (LoadingManager.Instance == null) return;
+        if (LoadingManager.Instance == null) 
+        {
+            Debug.LogWarning("[SAMSystemController] LoadingManager.Instance es null - no se puede actualizar progreso");
+            return;
+        }
 
         try
         {
             string json = Encoding.UTF8.GetString(messageData);
             ProgressUpdate update = JsonUtility.FromJson<ProgressUpdate>(json);
+            
+            Debug.Log($"[SAMSystemController] 📊 Progreso recibido: {update.step} - {update.progress:F1}%");
             
             // Actualizar la UI de carga localmente
             LoadingManager.Instance.UpdateProgress(update.step, update.progress);
@@ -413,12 +420,21 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             // y somos el MasterClient (el "Colocador"), retransmitimos el progreso.
             if (photonManager != null && photonManager.IsMasterClient())
             {
+                Debug.Log($"[SAMSystemController] 📡 Retransmitiendo progreso a otros jugadores: {update.step} - {update.progress:F1}%");
                 photonManager.BroadcastProgressUpdate(update.step, update.progress);
+            }
+            else if (photonManager == null)
+            {
+                Debug.Log("[SAMSystemController] PhotonManager es null - modo single player");
+            }
+            else if (!photonManager.IsMasterClient())
+            {
+                Debug.Log("[SAMSystemController] No soy MasterClient - no retransmito progreso");
             }
         }
         catch (Exception e)
         {
-            Debug.LogError($"Error procesando el mensaje de progreso: {e}");
+            Debug.LogError($"[SAMSystemController] Error procesando el mensaje de progreso: {e}");
         }
     }
 
