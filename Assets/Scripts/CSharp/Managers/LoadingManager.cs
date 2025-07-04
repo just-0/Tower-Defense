@@ -72,6 +72,7 @@ public class LoadingManager : MonoBehaviour
             // Nos suscribimos para que el cliente (Selector) pueda mostrar el progreso.
             photonManager.OnProgressUpdateReceived += HandleRemoteProgressUpdate;
             photonManager.OnSamProcessingComplete += HandleRemoteSamComplete;
+            photonManager.OnErrorReceived += HandleRemoteError;
         }
     }
 
@@ -82,6 +83,7 @@ public class LoadingManager : MonoBehaviour
         {
             PhotonManager.Instance.OnProgressUpdateReceived -= HandleRemoteProgressUpdate;
             PhotonManager.Instance.OnSamProcessingComplete -= HandleRemoteSamComplete;
+            PhotonManager.Instance.OnErrorReceived -= HandleRemoteError;
         }
     }
 
@@ -104,6 +106,13 @@ public class LoadingManager : MonoBehaviour
         // Este método es llamado en el cliente Selector cuando el Colocador ha terminado el proceso SAM.
         Debug.Log("[LoadingManager] Recibida notificación remota de finalización. Ocultando pantalla.");
         Hide();
+    }
+
+    private void HandleRemoteError(string errorMessage, string errorCode)
+    {
+        // Este método es llamado cuando se recibe un error desde el servidor remoto.
+        Debug.Log($"[LoadingManager] Error remoto recibido: {errorCode} - {errorMessage}");
+        ShowErrorTemporarily(errorMessage, 3f);
     }
 
     /// <summary>
@@ -234,5 +243,47 @@ public class LoadingManager : MonoBehaviour
     public bool IsVisible()
     {
         return currentLoadingScreen != null;
+    }
+
+    /// <summary>
+    /// Muestra un mensaje de error temporal en la pantalla de carga y la oculta después del tiempo especificado.
+    /// </summary>
+    /// <param name="errorMessage">El mensaje de error a mostrar.</param>
+    /// <param name="displayTime">Tiempo en segundos que se mostrará el error antes de ocultar la pantalla.</param>
+    public void ShowErrorTemporarily(string errorMessage, float displayTime = 3f)
+    {
+        // Asegurar que la pantalla de carga esté visible
+        if (currentLoadingScreen == null)
+        {
+            Show("Error", false);
+        }
+
+        // Actualizar con el mensaje de error
+        if (loadingText != null)
+        {
+            loadingText.text = $"❌ {errorMessage}";
+            loadingText.color = UnityEngine.Color.red;
+        }
+
+        // Ocultar el texto de progreso durante errores
+        if (progressText != null)
+        {
+            progressText.gameObject.SetActive(false);
+        }
+
+        // Iniciar corrutina para ocultar después del tiempo especificado
+        StartCoroutine(HideAfterDelay(displayTime));
+    }
+
+    private System.Collections.IEnumerator HideAfterDelay(float delay)
+    {
+        yield return new UnityEngine.WaitForSeconds(delay);
+        Hide();
+        
+        // Restaurar color del texto para futuros usos
+        if (loadingText != null)
+        {
+            loadingText.color = UnityEngine.Color.white;
+        }
     }
 } 

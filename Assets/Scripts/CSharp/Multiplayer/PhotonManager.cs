@@ -47,6 +47,8 @@ public class PhotonManager : MonoBehaviourPunCallbacks
     public event Action<string, float> OnProgressUpdateReceived;
     // Notifica a los clientes que el proceso SAM ha finalizado y la pantalla de carga debe ocultarse.
     public event Action OnSamProcessingComplete;
+    // Notifica a los clientes sobre errores que requieren mostrar mensaje temporal.
+    public event Action<string, string> OnErrorReceived;
     // --- FIN NUEVOS EVENTOS ---
 
     private PhotonView photonView; // Añadir referencia al PhotonView
@@ -193,6 +195,19 @@ public class PhotonManager : MonoBehaviourPunCallbacks
             photonView.RPC("RPC_ReceiveSamComplete", RpcTarget.Others);
         }
     }
+
+    /// <summary>
+    /// Retransmite un mensaje de error a otros jugadores en la sala.
+    /// Solo el Master Client (Colocador) debería llamar a esto.
+    /// </summary>
+    public void BroadcastError(string errorMessage, string errorCode)
+    {
+        if (PhotonNetwork.InRoom && IsMasterClient())
+        {
+            // Usa el RPC para enviar el error a los otros jugadores.
+            photonView.RPC("RPC_ReceiveError", RpcTarget.Others, errorMessage, errorCode);
+        }
+    }
     
     /// <summary>
     /// Comprueba si el cliente actual es el Master Client de la sala.
@@ -232,6 +247,13 @@ public class PhotonManager : MonoBehaviourPunCallbacks
     {
         Debug.Log("[PhotonManager] RPC de finalización de SAM recibido.");
         OnSamProcessingComplete?.Invoke();
+    }
+
+    [PunRPC]
+    private void RPC_ReceiveError(string errorMessage, string errorCode)
+    {
+        Debug.Log($"[PhotonManager] RPC de error recibido: {errorCode} - {errorMessage}");
+        OnErrorReceived?.Invoke(errorMessage, errorCode);
     }
     // --- FIN NUEVOS RPCs ---
 } 

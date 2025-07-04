@@ -19,7 +19,7 @@ from config.settings import (
     MESSAGE_TYPE_CAMERA_FRAME, MESSAGE_TYPE_MASK, MESSAGE_TYPE_PATH,
     MESSAGE_TYPE_GRID_POSITION, CAMERA_INDEX, CAMERA_WIDTH_PREFERRED, CAMERA_HEIGHT_PREFERRED,
     CAMERA_FPS, MESSAGE_TYPE_GRID_CONFIRMATION, TRANSMISSION_FPS, MESSAGE_TYPE_PROGRESS_UPDATE,
-    MESSAGE_TYPE_CAMERA_INFO
+    MESSAGE_TYPE_CAMERA_INFO, MESSAGE_TYPE_ERROR
 )
 
 class GameServer:
@@ -152,83 +152,147 @@ class GameServer:
         except Exception as e:
             print(f"Error enviando actualización de progreso: {e}")
 
+    async def send_error_message(self, websocket, error_message, error_code="ERROR"):
+        """Envía un mensaje de error al cliente."""
+        try:
+            error_data = {"error": error_message, "code": error_code}
+            error_json = json.dumps(error_data)
+            await websocket.send(bytes([MESSAGE_TYPE_ERROR]) + error_json.encode('utf-8'))
+            print(f"Error sent to client: {error_message}")
+        except Exception as e:
+            print(f"Failed to send error message: {e}")
+
     async def process_sam(self, websocket):
-        """Process the current frame with SAM and send the result, with error handling."""
+        """Process the current frame with SAM and send the result, with robust error handling."""
         print("Starting SAM process...")
+        processing_successful = False
+        
         try:
             # Informar al cliente que el proceso ha comenzado
             await self.send_progress_update(websocket, "Iniciando proceso...", 5)
             
-            if not self.planning_camera_manager.is_running:
-                self.planning_camera_manager.start_camera()
-                await asyncio.sleep(1.5)
-
-            frame = self.planning_camera_manager.get_current_frame()
-            if frame is None:
-                await self.send_progress_update(websocket, "Error: no se pudo capturar fotograma.", 0)
-                print("Error: Could not get frame for SAM processing.")
+            # === PASO 1: Verificar y inicializar cámara ===
+            try:
+                if not self.planning_camera_manager.is_running:
+                    if not self.planning_camera_manager.start_camera():
+                        raise Exception("No se pudo inicializar la cámara principal")
+                    await asyncio.sleep(1.5)
+                    
+                await self.send_progress_update(websocket, "Cámara inicializada correctamente", 10)
+            except Exception as e:
+                await self.send_error_message(websocket, f"Error de cámara: {str(e)}", "CAMERA_ERROR")
                 return
 
-            await self.send_progress_update(websocket, "Detectando marcador ArUco...", 15)
-            if frame.shape[2] == 3:
-                frame_bgr_for_aruco = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            else:
-                frame_bgr_for_aruco = frame
-
-            ids, centers, aruco_corners, _ = self.aruco_detector.detect(frame_bgr_for_aruco, draw=False)
-            await self.send_progress_update(websocket, "Detección de ArUco finalizada.", 30)
-
-            goal = None
-            if centers and len(centers) > 0:
-                cx, cy = centers[0]
-                goal = (int(cy), int(cx))
-                print(f"ArUco marker found at {goal}.")
-            else:
-                print("Warning: ArUco marker not found.")
-            
-            print("Processing frame with SAM...")
-            await self.send_progress_update(websocket, "Iniciando SAM...", 40)
-            
-            mask_bytes = await self.sam_processor.process_image(
-                frame, 
-                scene_type="pared", 
-                aruco_corners=aruco_corners,
-                progress_callback=self.send_progress_update,
-                websocket=websocket
-            )
-            
-            if not mask_bytes:
-                await self.send_progress_update(websocket, "Error en procesamiento SAM", 0)
-                print("Error: SAM processing did not return a mask.")
+            # === PASO 2: Capturar frame ===
+            try:
+                frame = self.planning_camera_manager.get_current_frame()
+                if frame is None:
+                    raise Exception("No se pudo capturar el fotograma de la cámara")
+                    
+                await self.send_progress_update(websocket, "Fotograma capturado exitosamente", 15)
+            except Exception as e:
+                await self.send_error_message(websocket, f"Error al capturar imagen: {str(e)}", "FRAME_CAPTURE_ERROR")
                 return
-            
-            await self.send_progress_update(websocket, "Máscara recibida. Calculando ruta...", 80)
-            await websocket.send(bytes([MESSAGE_TYPE_MASK]) + mask_bytes)
-            print("Mask sent. Calculating A* path...")
 
-            path = handle_astar_from_mask(mask_bytes, False, goal=goal)
-            if path:
+            # === PASO 3: Detectar ArUco ===
+            try:
+                await self.send_progress_update(websocket, "Detectando marcador ArUco...", 20)
+                
+                if frame.shape[2] == 3:
+                    frame_bgr_for_aruco = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                else:
+                    frame_bgr_for_aruco = frame
+
+                ids, centers, aruco_corners, _ = self.aruco_detector.detect(frame_bgr_for_aruco, draw=False)
+                
+                goal = None
+                if centers and len(centers) > 0:
+                    cx, cy = centers[0]
+                    goal = (int(cy), int(cx))
+                    print(f"ArUco marker found at {goal}.")
+                    await self.send_progress_update(websocket, "✓ Marcador ArUco detectado", 30)
+                else:
+                    print("Warning: ArUco marker not found - continuing without specific goal")
+                    await self.send_progress_update(websocket, "⚠ ArUco no detectado - usando ruta por defecto", 30)
+                    
+            except Exception as e:
+                # ArUco no es crítico, podemos continuar
+                print(f"ArUco detection failed: {e}")
+                await self.send_progress_update(websocket, "⚠ Detección ArUco falló - continuando...", 30)
+                goal = None
+                aruco_corners = None
+
+            # === PASO 4: Procesamiento SAM ===
+            try:
+                print("Processing frame with SAM...")
+                await self.send_progress_update(websocket, "Iniciando análisis SAM...", 40)
+                
+                mask_bytes = await self.sam_processor.process_image(
+                    frame, 
+                    scene_type="pared", 
+                    aruco_corners=aruco_corners,
+                    progress_callback=self.send_progress_update,
+                    websocket=websocket
+                )
+                
+                if not mask_bytes:
+                    raise Exception("El modelo SAM no pudo generar una máscara válida")
+                
+                await self.send_progress_update(websocket, "✓ Máscara SAM generada exitosamente", 80)
+                await websocket.send(bytes([MESSAGE_TYPE_MASK]) + mask_bytes)
+                print("Mask sent successfully.")
+                
+            except Exception as e:
+                await self.send_error_message(websocket, f"Error en procesamiento SAM: {str(e)}", "SAM_PROCESSING_ERROR")
+                return
+
+            # === PASO 5: Cálculo de ruta A* ===
+            try:
+                await self.send_progress_update(websocket, "Calculando ruta óptima...", 85)
+                
+                path = handle_astar_from_mask(mask_bytes, False, goal=goal)
+                if not path or len(path) < 2:
+                    raise Exception("No se pudo calcular una ruta válida. Verifica que haya un camino libre en el mapa")
+                
                 path_data = [{"x": x, "y": y} for x, y in path]
                 path_json = json.dumps(path_data)
-                await self.send_progress_update(websocket, "Ruta calculada. Enviando...", 95)
+                
+                await self.send_progress_update(websocket, "✓ Ruta calculada. Enviando...", 95)
                 await websocket.send(bytes([MESSAGE_TYPE_PATH]) + path_json.encode('utf-8'))
+                
+                # Enviar actualización final al 100% para sincronizar ambos jugadores
+                await self.send_progress_update(websocket, "¡Procesamiento completado exitosamente!", 100)
                 print("Path sent successfully.")
-            else:
-                await self.send_progress_update(websocket, "Error: no se pudo calcular la ruta A*.", 0)
-                print("Warning: A* path could not be calculated.")
+                processing_successful = True
+                
+            except Exception as e:
+                await self.send_error_message(websocket, f"Error al calcular ruta: {str(e)}", "PATHFINDING_ERROR")
+                return
 
         except Exception as e:
+            # Error general no manejado
             import traceback
-            print("--- FATAL ERROR DURING SAM PROCESSING ---")
+            error_msg = f"Error inesperado durante el procesamiento: {str(e)}"
+            print("--- UNEXPECTED ERROR DURING SAM PROCESSING ---")
             print(f"Error Type: {type(e).__name__}")
             print(f"Error Message: {e}")
             traceback.print_exc()
             print("-----------------------------------------")
+            
+            await self.send_error_message(websocket, error_msg, "UNEXPECTED_ERROR")
+            
         finally:
-            # Always ensure the planning camera is stopped after the process to free the resource
-            if self.planning_camera_manager.is_running:
-                self.planning_camera_manager.stop_camera()
-                print("Planning camera stopped after SAM process.")
+            # Siempre limpiar recursos, sin importar el resultado
+            try:
+                if self.planning_camera_manager.is_running:
+                    self.planning_camera_manager.stop_camera()
+                    print("Planning camera stopped after SAM process.")
+            except:
+                pass  # No fallar en la limpieza
+                
+            # Si no fue exitoso, asegurar que no quede en estado de procesamiento
+            if not processing_successful:
+                print("SAM processing failed - system ready for retry")
 
     async def handle_combat_mode(self, websocket):
         """Handle the combat mode with enhanced camera manager."""

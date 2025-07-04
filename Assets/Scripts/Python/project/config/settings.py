@@ -69,6 +69,7 @@ MESSAGE_TYPE_SWITCH_CAMERA = 9 # New message to request a camera switch
 MESSAGE_TYPE_CAMERA_LIST = 10 # New message to send the list of available cameras
 MESSAGE_TYPE_PROGRESS_UPDATE = 11 # For sending progress updates during long tasks
 MESSAGE_TYPE_CAMERA_INFO = 12 # For sending camera resolution info
+MESSAGE_TYPE_ERROR = 13 # For sending error messages that require user attention
 
 # Mask validation settings
 MIN_BLACK_RATIO = 0.05

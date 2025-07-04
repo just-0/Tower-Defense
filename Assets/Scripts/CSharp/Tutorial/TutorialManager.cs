@@ -283,8 +283,19 @@ public class TutorialManager : MonoBehaviour
             return;
         }
 
-        // La acción de salir ahora es directa. Si se llama, se sale.
+        // Limpiar cualquier estado del tutorial que pueda interferir
+        StopAllCoroutines();
+        
+        // Resetear el MenuGestureController para asegurar reconexión limpia
         Debug.Log("Saliendo del tutorial y volviendo al menú principal...");
+        Debug.Log("Reseteando MenuGestureController para evitar problemas de conexión...");
+        
+        if (MenuGestureController.Instance != null)
+        {
+            // Forzar reset del estado antes de ir al menú
+            MenuGestureController.Instance.ResetAndReconnect();
+        }
+        
         SceneManager.LoadScene("1_MainMenu");
     }
 

@@ -36,6 +36,7 @@ public class MenuGestureController : MonoBehaviour
     private bool actionTriggered = false;
     private bool firstFrameReceived = false; // Flag para controlar la carga
     private const float REQUIRED_HOLD_TIME = 2.5f; // Segundos para mantener el gesto
+    private bool isReconnecting = false; // Flag para evitar reconexiones múltiples
 
     void Awake()
     {
@@ -56,11 +57,30 @@ public class MenuGestureController : MonoBehaviour
 
     async void Start()
     {
+        // Verificar si ya estamos inicializados y necesitamos reconexión
+        if (websocket != null)
+        {
+            Debug.Log("MenuGestureController: Ya inicializado, verificando conexión...");
+            if (NeedsReconnection())
+            {
+                ResetAndReconnect();
+            }
+            return;
+        }
+
         // La UI se asignará dinámicamente, por lo que las referencias iniciales pueden ser nulas.
         if (loadingPanel != null) loadingPanel.SetActive(true);
         if (cameraFeed != null) cameraFeed.gameObject.SetActive(false);
 
         receivedTexture = new Texture2D(2, 2);
+        
+        // Asegurar que el BackendManager esté en modo Menu al inicializar
+        if (BackendManager.Instance != null)
+        {
+            await BackendManager.Instance.RequestBackendMode(BackendMode.Menu);
+            await System.Threading.Tasks.Task.Delay(500); // Esperar un poco
+        }
+        
         websocket = new WebSocket("ws://localhost:8766"); // Conectar al nuevo puerto del menú
 
         websocket.OnOpen += () => {}; // Debug.Log("Conectado al servidor de gestos del menú.");
@@ -189,6 +209,82 @@ public class MenuGestureController : MonoBehaviour
         cameraFeed = null;
         fingerCountText = null;
         loadingPanel = null;
+    }
+
+    /// <summary>
+    /// Resetea el estado del MenuGestureController y fuerza reconexión.
+    /// Útil cuando se vuelve de escenas como el tutorial.
+    /// </summary>
+    public async void ResetAndReconnect()
+    {
+        if (isReconnecting) return; // Evitar reconexiones múltiples
+        
+        isReconnecting = true;
+        Debug.Log("MenuGestureController: Reseteando estado y reconectando...");
+        
+        // Resetear flags de estado
+        firstFrameReceived = false;
+        currentFingerCount = 0;
+        holdTimer = 0f;
+        actionTriggered = false;
+        
+        // Mostrar panel de carga si existe
+        if (loadingPanel != null) 
+        {
+            loadingPanel.SetActive(true);
+        }
+        if (cameraFeed != null) 
+        {
+            cameraFeed.gameObject.SetActive(false);
+        }
+        
+        // Cerrar conexión existente si está abierta
+        if (websocket != null && websocket.State == WebSocketState.Open)
+        {
+            await websocket.Close();
+        }
+        
+        // Asegurar que el BackendManager esté en modo Menu
+        if (BackendManager.Instance != null)
+        {
+            await BackendManager.Instance.RequestBackendMode(BackendMode.Menu);
+            await System.Threading.Tasks.Task.Delay(500); // Esperar un poco para que el backend cambie
+        }
+        
+        // Reconectar
+        websocket = new WebSocket("ws://localhost:8766");
+        websocket.OnOpen += () => {
+            Debug.Log("MenuGestureController: Reconectado exitosamente al servidor de gestos del menú.");
+        };
+        websocket.OnError += (e) => Debug.LogError($"Error en reconexión WebSocket del menú: {e}");
+        websocket.OnMessage += OnMessageReceived;
+        
+        await websocket.Connect();
+        isReconnecting = false;
+    }
+
+    /// <summary>
+    /// Verifica si el MenuGestureController necesita reconectarse.
+    /// </summary>
+    public bool NeedsReconnection()
+    {
+        return websocket == null || websocket.State != WebSocketState.Open || !firstFrameReceived;
+    }
+
+    /// <summary>
+    /// Método estático de conveniencia para resetear desde cualquier lugar.
+    /// </summary>
+    public static void ForceResetConnection()
+    {
+        if (Instance != null)
+        {
+            Debug.Log("ForceResetConnection: Reseteando MenuGestureController desde llamada estática.");
+            Instance.ResetAndReconnect();
+        }
+        else
+        {
+            Debug.LogWarning("ForceResetConnection: No existe instancia de MenuGestureController para resetear.");
+        }
     }
 
     public async void RequestCameraSwitch(int newIndex)

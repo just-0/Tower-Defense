@@ -111,4 +111,21 @@ public class BackendManager : MonoBehaviour
             await websocket.Close();
         }
     }
+
+    /// <summary>
+    /// Fuerza el backend a volver al modo Menu. Útil para resetear después de tutoriales u otras actividades.
+    /// </summary>
+    public async void ForceMenuMode()
+    {
+        Debug.Log("BackendManager: Forzando modo Menu...");
+        await RequestBackendMode(BackendMode.Menu);
+    }
+
+    /// <summary>
+    /// Verifica si el backend está conectado y responde.
+    /// </summary>
+    public bool IsConnected()
+    {
+        return websocket != null && websocket.State == WebSocketState.Open;
+    }
 } 

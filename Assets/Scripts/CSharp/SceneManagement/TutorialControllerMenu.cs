@@ -19,6 +19,13 @@ public class TutorialControllerMenu : MonoBehaviour
     public void LoadColocadorTutorial()
     {
         Debug.Log($"Cargando escena del tutorial del Colocador: {COLOCADOR_TUTORIAL_SCENE}");
+        
+        // Preparar el MenuGestureController para cuando volvamos
+        if (MenuGestureController.Instance != null)
+        {
+            Debug.Log("Preparando MenuGestureController para cuando regrese del tutorial...");
+        }
+        
         SceneManager.LoadScene(COLOCADOR_TUTORIAL_SCENE);
     }
 
@@ -30,6 +37,13 @@ public class TutorialControllerMenu : MonoBehaviour
     public void LoadSelectorTutorial()
     {
         Debug.Log($"Cargando escena del tutorial del Selector: {SELECTOR_TUTORIAL_SCENE}");
+        
+        // Preparar el MenuGestureController para cuando volvamos
+        if (MenuGestureController.Instance != null)
+        {
+            Debug.Log("Preparando MenuGestureController para cuando regrese del tutorial...");
+        }
+        
         SceneManager.LoadScene(SELECTOR_TUTORIAL_SCENE);
     }
 

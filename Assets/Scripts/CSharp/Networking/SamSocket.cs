@@ -43,6 +43,13 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         public int height;
     }
 
+    [Serializable]
+    public struct ErrorMessage
+    {
+        public string error;
+        public string code;
+    }
+
     [Header("Cursor y Rango")]
     [Tooltip("La escala del objeto visual que sigue al dedo del jugador.")]
     [SerializeField] private float cursorScale = 0.6f;
@@ -151,6 +158,7 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             mainWebSocketClient.OnGridPositionConfirmed += HandleGridConfirmation;
             mainWebSocketClient.OnProgressUpdateReceived += HandleProgressUpdate;
             mainWebSocketClient.OnCameraInfoReceived += HandleCameraInfoMessage;
+            mainWebSocketClient.OnErrorReceived += HandleErrorMessage;
             // Podríamos también suscribirnos a OnError y OnClose si necesitamos lógica específica aquí
         }
         else
@@ -276,6 +284,9 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             {
                 photonManager.BroadcastSamComplete();
             }
+            
+            // Resetear el estado de procesamiento para permitir nuevos intentos
+            processingFrame = false;
         }
         catch (Exception e) 
         {
@@ -285,7 +296,13 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             // Si hay un error, también ocultamos la pantalla para no bloquear al jugador
             if (LoadingManager.Instance != null)
             {
-                LoadingManager.Instance.Hide();
+                LoadingManager.Instance.ShowErrorTemporarily("Error al procesar la ruta recibida", 3f);
+            }
+            
+            // También notificar el error via Photon si es necesario
+            if (photonManager != null && photonManager.IsMasterClient())
+            {
+                photonManager.BroadcastError("Error al procesar la ruta recibida", "PATH_PROCESSING_ERROR");
             }
         }
     }
@@ -369,6 +386,42 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             Debug.Log($"Solicitud para colocar la torreta seleccionada en: {worldPosition}");
             }
         }
+
+    private void HandleErrorMessage(byte[] messageData)
+    {
+        try
+        {
+            string json = Encoding.UTF8.GetString(messageData);
+            ErrorMessage errorMsg = JsonUtility.FromJson<ErrorMessage>(json);
+            
+            Debug.LogError($"[SAMSystemController] Error recibido: {errorMsg.code} - {errorMsg.error}");
+            
+            // Mostrar error localmente en el Colocador
+            if (LoadingManager.Instance != null)
+            {
+                LoadingManager.Instance.ShowErrorTemporarily(errorMsg.error, 3f);
+            }
+
+            // Si estamos en modo multijugador y somos el MasterClient, retransmitir el error
+            if (photonManager != null && photonManager.IsMasterClient())
+            {
+                photonManager.BroadcastError(errorMsg.error, errorMsg.code);
+            }
+
+            // Resetear el estado de procesamiento para permitir reintento
+            processingFrame = false;
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"Error procesando mensaje de error: {e}");
+            // Fallback genérico
+            if (LoadingManager.Instance != null)
+            {
+                LoadingManager.Instance.ShowErrorTemporarily("Error inesperado en el procesamiento", 3f);
+            }
+            processingFrame = false;
+        }
+    }
 
     private Vector3 ConvertGridToWorld(float gridX, float gridY)
     {
@@ -677,9 +730,17 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         {
             Debug.LogWarning($"SAMSystemController: Timeout de procesamiento ({PROCESSING_TIMEOUT}s). Reseteando estado.");
             processingFrame = false;
+            
+            string timeoutMessage = $"Timeout: El procesamiento tardó más de {PROCESSING_TIMEOUT} segundos";
             if (LoadingManager.Instance != null)
             {
-                LoadingManager.Instance.Hide();
+                LoadingManager.Instance.ShowErrorTemporarily(timeoutMessage, 3f);
+            }
+            
+            // Notificar timeout via Photon si es necesario
+            if (photonManager != null && photonManager.IsMasterClient())
+            {
+                photonManager.BroadcastError(timeoutMessage, "PROCESSING_TIMEOUT");
             }
         }
 
@@ -791,6 +852,7 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             mainWebSocketClient.OnGridPositionConfirmed -= HandleGridConfirmation;
             mainWebSocketClient.OnProgressUpdateReceived -= HandleProgressUpdate;
             mainWebSocketClient.OnCameraInfoReceived -= HandleCameraInfoMessage;
+            mainWebSocketClient.OnErrorReceived -= HandleErrorMessage;
         }
     }
 
