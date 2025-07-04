@@ -1,5 +1,6 @@
 using UnityEngine;
 using TMPro; // Asegúrate de tener TextMeshPro importado
+using Photon.Pun; // Para acceder a PhotonNetwork
 
 public class LoadingManager : MonoBehaviour
 {
@@ -82,7 +83,7 @@ public class LoadingManager : MonoBehaviour
             Debug.Log("[LoadingManager] ✅ Suscripción a eventos de PhotonManager completada.");
             
             // Verificar estado de conexión
-            if (photonManager.IsConnectedToRoom())
+            if (PhotonNetwork.InRoom)
             {
                 Debug.Log($"[LoadingManager] 🌐 Conectado a sala multijugador. MasterClient: {photonManager.IsMasterClient()}");
             }
@@ -192,7 +193,7 @@ public class LoadingManager : MonoBehaviour
     private bool IsSelector()
     {
         var photonManager = PhotonManager.Instance;
-        return photonManager != null && photonManager.IsConnectedToRoom() && !photonManager.IsMasterClient();
+        return photonManager != null && PhotonNetwork.InRoom && !photonManager.IsMasterClient();
     }
 
     /// <summary>
