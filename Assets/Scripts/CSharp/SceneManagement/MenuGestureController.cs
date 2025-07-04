@@ -34,7 +34,7 @@ public class MenuGestureController : MonoBehaviour
     private int currentFingerCount = 0;
     private float holdTimer = 0f;
     private bool actionTriggered = false;
-    private bool firstFrameReceived = false; // Flag para controlar la carga
+    public bool firstFrameReceived = false; // Flag para controlar la carga - público para reseteo desde tutorial
     private const float REQUIRED_HOLD_TIME = 2.5f; // Segundos para mantener el gesto
     private bool isReconnecting = false; // Flag para evitar reconexiones múltiples
 
@@ -57,22 +57,40 @@ public class MenuGestureController : MonoBehaviour
 
     async void Start()
     {
-        // Verificar si ya estamos inicializados y necesitamos reconexión
-        if (websocket != null)
+        // Solo inicializar si aún no tenemos websocket o necesitamos reconectar
+        if (websocket != null && websocket.State == WebSocketState.Open && firstFrameReceived)
         {
-            Debug.Log("MenuGestureController: Ya inicializado, verificando conexión...");
-            if (NeedsReconnection())
-            {
-                ResetAndReconnect();
-            }
+            Debug.Log("MenuGestureController: Ya conectado y funcionando correctamente.");
             return;
         }
 
+        // Pequeño delay para evitar conflictos con el backend cuando se cambia de escena
+        await System.Threading.Tasks.Task.Delay(200);
+        await InitializeConnection();
+    }
+
+    private async System.Threading.Tasks.Task InitializeConnection()
+    {
+        if (isReconnecting)
+        {
+            Debug.Log("MenuGestureController: Ya reconectando, ignorando nueva solicitud...");
+            return;
+        }
+
+        isReconnecting = true;
+        
         // La UI se asignará dinámicamente, por lo que las referencias iniciales pueden ser nulas.
         if (loadingPanel != null) loadingPanel.SetActive(true);
         if (cameraFeed != null) cameraFeed.gameObject.SetActive(false);
 
-        receivedTexture = new Texture2D(2, 2);
+        if (receivedTexture == null) receivedTexture = new Texture2D(2, 2);
+        
+        // Cerrar conexión existente si la hay
+        if (websocket != null && websocket.State == WebSocketState.Open)
+        {
+            await websocket.Close();
+            await System.Threading.Tasks.Task.Delay(250); // Esperar que se cierre completamente
+        }
         
         // Asegurar que el BackendManager esté en modo Menu al inicializar
         if (BackendManager.Instance != null)
@@ -83,7 +101,9 @@ public class MenuGestureController : MonoBehaviour
         
         websocket = new WebSocket("ws://localhost:8766"); // Conectar al nuevo puerto del menú
 
-        websocket.OnOpen += () => {}; // Debug.Log("Conectado al servidor de gestos del menú.");
+        websocket.OnOpen += () => {
+            Debug.Log("MenuGestureController: Conectado exitosamente al servidor de gestos del menú.");
+        };
         websocket.OnError += (e) => Debug.LogError($"Error en WebSocket del menú: {e}");
         websocket.OnMessage += OnMessageReceived;
 
@@ -94,14 +114,11 @@ public class MenuGestureController : MonoBehaviour
         }
 
         await websocket.Connect();
+        isReconnecting = false;
 
         #if !UNITY_WEBGL || UNITY_EDITOR
             websocket?.DispatchMessageQueue();
         #endif
-
-        // Ya no es necesario manejar aquí los gestos antiguos,
-        // el sistema se ha modularizado completamente.
-        // HandleGestureActions();
     }
 
     void Update()
@@ -217,9 +234,12 @@ public class MenuGestureController : MonoBehaviour
     /// </summary>
     public async void ResetAndReconnect()
     {
-        if (isReconnecting) return; // Evitar reconexiones múltiples
+        if (isReconnecting) 
+        {
+            Debug.Log("MenuGestureController: Ya reconectando, ignorando solicitud de reset...");
+            return; // Evitar reconexiones múltiples
+        }
         
-        isReconnecting = true;
         Debug.Log("MenuGestureController: Reseteando estado y reconectando...");
         
         // Resetear flags de estado
@@ -228,39 +248,8 @@ public class MenuGestureController : MonoBehaviour
         holdTimer = 0f;
         actionTriggered = false;
         
-        // Mostrar panel de carga si existe
-        if (loadingPanel != null) 
-        {
-            loadingPanel.SetActive(true);
-        }
-        if (cameraFeed != null) 
-        {
-            cameraFeed.gameObject.SetActive(false);
-        }
-        
-        // Cerrar conexión existente si está abierta
-        if (websocket != null && websocket.State == WebSocketState.Open)
-        {
-            await websocket.Close();
-        }
-        
-        // Asegurar que el BackendManager esté en modo Menu
-        if (BackendManager.Instance != null)
-        {
-            await BackendManager.Instance.RequestBackendMode(BackendMode.Menu);
-            await System.Threading.Tasks.Task.Delay(500); // Esperar un poco para que el backend cambie
-        }
-        
-        // Reconectar
-        websocket = new WebSocket("ws://localhost:8766");
-        websocket.OnOpen += () => {
-            Debug.Log("MenuGestureController: Reconectado exitosamente al servidor de gestos del menú.");
-        };
-        websocket.OnError += (e) => Debug.LogError($"Error en reconexión WebSocket del menú: {e}");
-        websocket.OnMessage += OnMessageReceived;
-        
-        await websocket.Connect();
-        isReconnecting = false;
+        // Usar la función centralizada de inicialización
+        await InitializeConnection();
     }
 
     /// <summary>
@@ -268,6 +257,10 @@ public class MenuGestureController : MonoBehaviour
     /// </summary>
     public bool NeedsReconnection()
     {
+        // No necesita reconexión si ya estamos en proceso de reconectar
+        if (isReconnecting) return false;
+        
+        // Necesita reconexión si no hay websocket, no está abierto, o no hemos recibido frames
         return websocket == null || websocket.State != WebSocketState.Open || !firstFrameReceived;
     }
 
@@ -362,8 +355,10 @@ public class MenuGestureController : MonoBehaviour
     
     private async void OnDestroy()
     {
-        if (websocket != null && websocket.State == WebSocketState.Open)
+        // Solo cerrar la conexión si este objeto se está destruyendo porque ya no es el singleton
+        if (Instance != this && websocket != null && websocket.State == WebSocketState.Open)
         {
+            Debug.Log("MenuGestureController: Cerrando conexión de instancia duplicada.");
             await websocket.Close();
         }
     }

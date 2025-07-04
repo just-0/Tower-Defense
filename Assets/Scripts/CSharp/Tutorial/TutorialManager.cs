@@ -286,14 +286,14 @@ public class TutorialManager : MonoBehaviour
         // Limpiar cualquier estado del tutorial que pueda interferir
         StopAllCoroutines();
         
-        // Resetear el MenuGestureController para asegurar reconexión limpia
         Debug.Log("Saliendo del tutorial y volviendo al menú principal...");
-        Debug.Log("Reseteando MenuGestureController para evitar problemas de conexión...");
         
+        // Solo resetear flags del MenuGestureController para que se auto-repare
         if (MenuGestureController.Instance != null)
         {
-            // Forzar reset del estado antes de ir al menú
-            MenuGestureController.Instance.ResetAndReconnect();
+            Debug.Log("Marcando MenuGestureController para auto-reparación en el menú...");
+            // Solo resetear el flag para que Start() detecte que necesita reconectar
+            MenuGestureController.Instance.firstFrameReceived = false;
         }
         
         SceneManager.LoadScene("1_MainMenu");

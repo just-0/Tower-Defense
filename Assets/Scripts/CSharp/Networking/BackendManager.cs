@@ -128,4 +128,31 @@ public class BackendManager : MonoBehaviour
     {
         return websocket != null && websocket.State == WebSocketState.Open;
     }
+    
+    /// <summary>
+    /// Limpia completamente el estado del backend y fuerza reconexión.
+    /// Útil para recuperarse de estados inconsistentes.
+    /// </summary>
+    public async void CleanupAndRestart()
+    {
+        Debug.Log("BackendManager: Limpiando estado y reiniciando...");
+        
+        // Parar todo primero
+        await RequestBackendMode(BackendMode.Stop);
+        await System.Threading.Tasks.Task.Delay(1000); // Esperar que se detenga completamente
+        
+        // Cerrar conexión WebSocket
+        if (websocket != null && websocket.State == WebSocketState.Open)
+        {
+            await websocket.Close();
+        }
+        
+        // Pequeño delay antes de reconectar
+        await System.Threading.Tasks.Task.Delay(500);
+        
+        // Reconnectar
+        await ConnectToControlServer();
+        
+        Debug.Log("BackendManager: Limpieza completada.");
+    }
 } 

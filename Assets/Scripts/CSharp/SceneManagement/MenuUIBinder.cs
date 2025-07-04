@@ -24,11 +24,14 @@ public class MenuUIBinder : MonoBehaviour
         {
             MenuGestureController.Instance.RegisterUI(cameraFeed, fingerCountText, loadingPanel);
             
-            // Verificar si necesita reconexión (útil cuando volvemos del tutorial)
+            // Solo verificar si necesita reconexión pero no forzar - dejar que Start() lo maneje
             if (MenuGestureController.Instance.NeedsReconnection())
             {
-                Debug.Log("MenuUIBinder: Detectado que MenuGestureController necesita reconexión. Iniciando...");
-                MenuGestureController.Instance.ResetAndReconnect();
+                Debug.Log("MenuUIBinder: MenuGestureController necesita reconexión. Su Start() se encargará automáticamente.");
+            }
+            else
+            {
+                Debug.Log("MenuUIBinder: MenuGestureController ya está conectado correctamente.");
             }
         }
         else
