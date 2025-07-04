@@ -75,6 +75,10 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
     [SerializeField] private GameObject towerPrefab; // Prefab de la torre que se coloca en la posición del ArUco
     private PhotonManager photonManager; // Referencia al gestor de Photon
     
+    [Header("Guía de Colocación ArUco")]
+    [SerializeField] private ArUcoPlacementGuide arUcoGuide; // Referencia a la guía de colocación
+    [SerializeField] private bool autoCreateGuide = true; // Crear automáticamente la guía si no está asignada
+    
     private Texture2D cameraTexture;
     private Texture2D maskTexture;
     // private WebSocket websocket; // Eliminado, MainWebSocketClient lo maneja
@@ -175,7 +179,38 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             }
         }
 
+        // Configurar la guía de colocación ArUco
+        SetupArUcoGuide();
+
         SetCursorVisibility(false);
+    }
+
+    private void SetupArUcoGuide()
+    {
+        // Buscar la guía existente
+        if (arUcoGuide == null)
+        {
+            arUcoGuide = FindObjectOfType<ArUcoPlacementGuide>();
+        }
+
+        // Si no existe y está habilitada la creación automática, crear una nueva
+        if (arUcoGuide == null && autoCreateGuide)
+        {
+            GameObject guideObj = new GameObject("ArUco Placement Guide");
+            arUcoGuide = guideObj.AddComponent<ArUcoPlacementGuide>();
+            Debug.Log("🎯 Guía de colocación ArUco creada automáticamente");
+        }
+
+        // Mostrar la guía inicial para fase de planificación
+        if (arUcoGuide != null)
+        {
+            arUcoGuide.ShowPlanningGuide();
+            Debug.Log("🎯 Guía de colocación ArUco activada para fase de planificación");
+        }
+        else
+        {
+            Debug.LogWarning("⚠️ No se pudo configurar la guía de colocación ArUco");
+        }
     }
 
     // Los métodos ConnectToServer, ProcessIncomingMessage, ProcessMessageFromQueue han sido eliminados
@@ -268,6 +303,13 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             processingFrame = false;
             Debug.Log("SAMSystemController: Path recibido, procesamiento SAM completado.");
             
+            // Volver a mostrar la guía de planificación después del procesamiento exitoso
+            if (arUcoGuide != null && !inCombatMode)
+            {
+                arUcoGuide.ShowPlanningGuide();
+                Debug.Log("🎯 Guía ArUco reactivada para fase de planificación tras procesamiento exitoso");
+            }
+            
             if (gestureReceiver != null)
             {
                 gestureReceiver.OnServerResponseReceived();
@@ -302,6 +344,14 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             Debug.LogError($"JSON parsing error en PathPoints: {e.Message}");
             // IMPORTANTE: También resetear en caso de error
             processingFrame = false;
+            
+            // Volver a mostrar la guía de planificación después de un error para permitir reintento
+            if (arUcoGuide != null && !inCombatMode)
+            {
+                arUcoGuide.ShowPlanningGuide();
+                Debug.Log("🎯 Guía ArUco reactivada para fase de planificación tras error en PathPoints");
+            }
+            
             // Si hay un error, también ocultamos la pantalla para no bloquear al jugador
             if (LoadingManager.Instance != null)
             {
@@ -419,6 +469,13 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
 
             // Resetear el estado de procesamiento para permitir reintento
             processingFrame = false;
+            
+            // Volver a mostrar la guía de planificación después de un error para permitir reintento
+            if (arUcoGuide != null && !inCombatMode)
+            {
+                arUcoGuide.ShowPlanningGuide();
+                Debug.Log("🎯 Guía ArUco reactivada para fase de planificación tras error");
+            }
         }
         catch (Exception e)
         {
@@ -429,6 +486,13 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
                 LoadingManager.Instance.ShowErrorTemporarily("Error inesperado en el procesamiento", 3f);
             }
             processingFrame = false;
+            
+            // También reactivar la guía en caso de error inesperado
+            if (arUcoGuide != null && !inCombatMode)
+            {
+                arUcoGuide.ShowPlanningGuide();
+                Debug.Log("🎯 Guía ArUco reactivada tras error inesperado");
+            }
         }
     }
 
@@ -740,6 +804,13 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             Debug.LogWarning($"SAMSystemController: Timeout de procesamiento ({PROCESSING_TIMEOUT}s). Reseteando estado.");
             processingFrame = false;
             
+            // Volver a mostrar la guía de planificación después de timeout para permitir reintento
+            if (arUcoGuide != null && !inCombatMode)
+            {
+                arUcoGuide.ShowPlanningGuide();
+                Debug.Log("🎯 Guía ArUco reactivada para fase de planificación tras timeout");
+            }
+            
             string timeoutMessage = $"Timeout: El procesamiento tardó más de {PROCESSING_TIMEOUT} segundos";
             if (LoadingManager.Instance != null)
             {
@@ -798,6 +869,13 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
                 currentTower = null;
             }
             
+            // Ocultar la guía durante el procesamiento SAM
+            if (arUcoGuide != null)
+            {
+                arUcoGuide.HideGuide();
+                Debug.Log("🎯 Guía ArUco ocultada durante procesamiento SAM");
+            }
+            
             if (LoadingManager.Instance != null)
             {
                 LoadingManager.Instance.Show("Procesando el escenario...", true);
@@ -811,6 +889,13 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             ClearPathSpheres();
             Debug.Log("Esferas del camino eliminadas al entrar en modo combate");
             
+            // Mostrar guía para fase de combate
+            if (arUcoGuide != null)
+            {
+                arUcoGuide.ShowCombatGuide();
+                Debug.Log("🎯 Guía ArUco activada para fase de combate");
+            }
+            
             if (monsterManager != null && storedWorldPath != null && storedWorldPath.Count > 0)
             {
                 monsterManager.SetPath(storedWorldPath);
@@ -823,6 +908,13 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
         {
             inCombatMode = false;
             combatModeJustStarted = false;
+            
+            // Mostrar guía para fase de planificación
+            if (arUcoGuide != null)
+            {
+                arUcoGuide.ShowPlanningGuide();
+                Debug.Log("🎯 Guía ArUco activada para fase de planificación");
+            }
             
             if (monsterManager != null) monsterManager.StopAllWaves();
             Debug.Log("Oleadas de monstruos detenidas al salir del modo combate");

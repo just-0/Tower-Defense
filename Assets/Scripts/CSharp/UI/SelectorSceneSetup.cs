@@ -1,4 +1,6 @@
 using UnityEngine;
+using UnityEngine.UI;
+using UnityEngine.EventSystems;
 
 /// <summary>
 /// Script que configura automáticamente toda la escena del Selector
@@ -66,11 +68,11 @@ public class SelectorSceneSetup : MonoBehaviour
         canvasObj.AddComponent<GraphicRaycaster>();
         
         // Crear EventSystem si no existe
-        if (FindObjectOfType<UnityEngine.EventSystems.EventSystem>() == null)
+        if (FindObjectOfType<EventSystem>() == null)
         {
             GameObject eventSystemObj = new GameObject("EventSystem");
-            eventSystemObj.AddComponent<UnityEngine.EventSystems.EventSystem>();
-            eventSystemObj.AddComponent<UnityEngine.EventSystems.StandaloneInputModule>();
+            eventSystemObj.AddComponent<EventSystem>();
+            eventSystemObj.AddComponent<StandaloneInputModule>();
         }
         
         // Añadir el helper automático

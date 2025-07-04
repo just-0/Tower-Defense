@@ -23,6 +23,10 @@ public class UIManager : MonoBehaviour
     private Color originalGoldColor;
     private Coroutine goldFlashCoroutine;
 
+    [Header("ArUco Placement Guide")]
+    [SerializeField] private ArUcoPlacementGuide arUcoGuide;
+    [SerializeField] private bool enableArUcoGuide = true;
+
     void Awake()
     {
         if (Instance != null && Instance != this)
@@ -134,6 +138,54 @@ public class UIManager : MonoBehaviour
         if (gameOverPanel != null)
         {
             gameOverPanel.SetActive(true);
+        }
+    }
+
+    // Métodos para control de la guía ArUco
+    public void ShowArUcoGuideForPlanning()
+    {
+        if (!enableArUcoGuide) return;
+        
+        if (arUcoGuide == null)
+        {
+            arUcoGuide = FindObjectOfType<ArUcoPlacementGuide>();
+        }
+        
+        if (arUcoGuide != null)
+        {
+            arUcoGuide.ShowPlanningGuide();
+        }
+    }
+
+    public void ShowArUcoGuideForCombat()
+    {
+        if (!enableArUcoGuide) return;
+        
+        if (arUcoGuide == null)
+        {
+            arUcoGuide = FindObjectOfType<ArUcoPlacementGuide>();
+        }
+        
+        if (arUcoGuide != null)
+        {
+            arUcoGuide.ShowCombatGuide();
+        }
+    }
+
+    public void HideArUcoGuide()
+    {
+        if (arUcoGuide != null)
+        {
+            arUcoGuide.HideGuide();
+        }
+    }
+
+    public void SetArUcoGuideEnabled(bool enabled)
+    {
+        enableArUcoGuide = enabled;
+        if (!enabled)
+        {
+            HideArUcoGuide();
         }
     }
 } 
