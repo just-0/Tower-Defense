@@ -99,12 +99,26 @@ public class LoadingManager : MonoBehaviour
     {
         // Este método es llamado en el cliente Selector cuando el Colocador envía una actualización.
         Debug.Log($"[LoadingManager] Recibida actualización remota de progreso: {step} - {progress}%");
-        // Asegurarse de que la pantalla de carga se muestre si aún no lo está
-        if (currentLoadingScreen == null)
+        
+        // IMPORTANTE: Si el progreso es 100%, significa que el proceso terminó.
+        // No debemos volver a mostrar la pantalla de carga si ya se ocultó.
+        if (progress >= 100f && currentLoadingScreen == null)
+        {
+            Debug.Log("[LoadingManager] ⚠️ Progreso al 100% recibido pero pantalla ya oculta. Ignorando para evitar mostrarla de nuevo.");
+            return;
+        }
+        
+        // Asegurarse de que la pantalla de carga se muestre si aún no lo está (solo si progreso < 100%)
+        if (currentLoadingScreen == null && progress < 100f)
         {
             Show("Sincronizando con el anfitrión...", true);
         }
-        UpdateProgress(step, progress);
+        
+        // Solo actualizar si la pantalla está visible
+        if (currentLoadingScreen != null)
+        {
+            UpdateProgress(step, progress);
+        }
     }
 
     private void HandleRemoteSamComplete()
