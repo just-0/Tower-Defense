@@ -111,48 +111,4 @@ public class BackendManager : MonoBehaviour
             await websocket.Close();
         }
     }
-
-    /// <summary>
-    /// Fuerza el backend a volver al modo Menu. Útil para resetear después de tutoriales u otras actividades.
-    /// </summary>
-    public async void ForceMenuMode()
-    {
-        Debug.Log("BackendManager: Forzando modo Menu...");
-        await RequestBackendMode(BackendMode.Menu);
-    }
-
-    /// <summary>
-    /// Verifica si el backend está conectado y responde.
-    /// </summary>
-    public bool IsConnected()
-    {
-        return websocket != null && websocket.State == WebSocketState.Open;
-    }
-    
-    /// <summary>
-    /// Limpia completamente el estado del backend y fuerza reconexión.
-    /// Útil para recuperarse de estados inconsistentes.
-    /// </summary>
-    public async void CleanupAndRestart()
-    {
-        Debug.Log("BackendManager: Limpiando estado y reiniciando...");
-        
-        // Parar todo primero
-        await RequestBackendMode(BackendMode.Stop);
-        await System.Threading.Tasks.Task.Delay(1000); // Esperar que se detenga completamente
-        
-        // Cerrar conexión WebSocket
-        if (websocket != null && websocket.State == WebSocketState.Open)
-        {
-            await websocket.Close();
-        }
-        
-        // Pequeño delay antes de reconectar
-        await System.Threading.Tasks.Task.Delay(500);
-        
-        // Reconnectar
-        await ConnectToControlServer();
-        
-        Debug.Log("BackendManager: Limpieza completada.");
-    }
 } 

@@ -283,19 +283,8 @@ public class TutorialManager : MonoBehaviour
             return;
         }
 
-        // Limpiar cualquier estado del tutorial que pueda interferir
-        StopAllCoroutines();
-        
+        // La acción de salir ahora es directa. Si se llama, se sale.
         Debug.Log("Saliendo del tutorial y volviendo al menú principal...");
-        
-        // Solo resetear flags del MenuGestureController para que se auto-repare
-        if (MenuGestureController.Instance != null)
-        {
-            Debug.Log("Marcando MenuGestureController para auto-reparación en el menú...");
-            // Solo resetear el flag para que Start() detecte que necesita reconectar
-            MenuGestureController.Instance.firstFrameReceived = false;
-        }
-        
         SceneManager.LoadScene("1_MainMenu");
     }
 
