@@ -51,6 +51,16 @@ public class PhotonManager : MonoBehaviourPunCallbacks
     public event Action<string, string> OnErrorReceived;
     // --- FIN NUEVOS EVENTOS ---
 
+    // --- NUEVOS EVENTOS PARA ESTADOS DEL JUEGO ---
+    // Eventos para sincronizar el estado del juego entre Colocador y Selector
+    public event Action<int> OnGoldUpdateReceived;
+    public event Action<int, int> OnHealthUpdateReceived; // current, max
+    public event Action<int> OnWaveUpdateReceived;
+    public event Action OnBaseDestroyedReceived;
+    public event Action OnMonsterDeathReceived;
+    public event Action<string, int, float, float, int> OnTurretInfoReceived; // name, cost, damage, range, level
+    // --- FIN NUEVOS EVENTOS ESTADOS DEL JUEGO ---
+
     private PhotonView photonView; // Añadir referencia al PhotonView
 
     private void Awake()
@@ -213,6 +223,76 @@ public class PhotonManager : MonoBehaviourPunCallbacks
             photonView.RPC("RPC_ReceiveError", RpcTarget.Others, errorMessage, errorCode);
         }
     }
+
+    // --- NUEVOS MÉTODOS PARA SINCRONIZAR ESTADOS DEL JUEGO ---
+    
+    /// <summary>
+    /// Envía actualización de oro al Selector. Solo el Master Client (Colocador) debería llamar a esto.
+    /// </summary>
+    public void BroadcastGoldUpdate(int currentGold)
+    {
+        if (PhotonNetwork.InRoom && IsMasterClient())
+        {
+            photonView.RPC("RPC_ReceiveGoldUpdate", RpcTarget.Others, currentGold);
+        }
+    }
+
+    /// <summary>
+    /// Envía actualización de salud de la base al Selector. Solo el Master Client (Colocador) debería llamar a esto.
+    /// </summary>
+    public void BroadcastHealthUpdate(int currentHealth, int maxHealth)
+    {
+        if (PhotonNetwork.InRoom && IsMasterClient())
+        {
+            photonView.RPC("RPC_ReceiveHealthUpdate", RpcTarget.Others, currentHealth, maxHealth);
+        }
+    }
+
+    /// <summary>
+    /// Envía actualización de oleada al Selector. Solo el Master Client (Colocador) debería llamar a esto.
+    /// </summary>
+    public void BroadcastWaveUpdate(int currentWave)
+    {
+        if (PhotonNetwork.InRoom && IsMasterClient())
+        {
+            photonView.RPC("RPC_ReceiveWaveUpdate", RpcTarget.Others, currentWave);
+        }
+    }
+
+    /// <summary>
+    /// Notifica al Selector que la base ha sido destruida. Solo el Master Client (Colocador) debería llamar a esto.
+    /// </summary>
+    public void BroadcastBaseDestroyed()
+    {
+        if (PhotonNetwork.InRoom && IsMasterClient())
+        {
+            photonView.RPC("RPC_ReceiveBaseDestroyed", RpcTarget.Others);
+        }
+    }
+
+    /// <summary>
+    /// Notifica al Selector sobre la muerte de un monstruo (para efectos de oro). Solo el Master Client (Colocador) debería llamar a esto.
+    /// </summary>
+    public void BroadcastMonsterDeath()
+    {
+        if (PhotonNetwork.InRoom && IsMasterClient())
+        {
+            photonView.RPC("RPC_ReceiveMonsterDeath", RpcTarget.Others);
+        }
+    }
+
+    /// <summary>
+    /// Envía información de torreta al Selector cuando se selecciona una. Solo el Master Client (Colocador) debería llamar a esto.
+    /// </summary>
+    public void BroadcastTurretInfo(string turretName, int cost, float damage, float range, int level)
+    {
+        if (PhotonNetwork.InRoom && IsMasterClient())
+        {
+            photonView.RPC("RPC_ReceiveTurretInfo", RpcTarget.Others, turretName, cost, damage, range, level);
+        }
+    }
+    
+    // --- FIN NUEVOS MÉTODOS PARA ESTADOS DEL JUEGO ---
     
     /// <summary>
     /// Comprueba si el cliente actual es el Master Client de la sala.
@@ -261,5 +341,51 @@ public class PhotonManager : MonoBehaviourPunCallbacks
         Debug.Log($"[PhotonManager] RPC de error recibido: {errorCode} - {errorMessage}");
         OnErrorReceived?.Invoke(errorMessage, errorCode);
     }
+    
+    // --- NUEVOS RPCs PARA ESTADOS DEL JUEGO ---
+    
+    [PunRPC]
+    private void RPC_ReceiveGoldUpdate(int currentGold)
+    {
+        Debug.Log($"[PhotonManager] RPC de actualización de oro recibido: {currentGold}");
+        OnGoldUpdateReceived?.Invoke(currentGold);
+    }
+
+    [PunRPC]
+    private void RPC_ReceiveHealthUpdate(int currentHealth, int maxHealth)
+    {
+        Debug.Log($"[PhotonManager] RPC de actualización de salud recibido: {currentHealth}/{maxHealth}");
+        OnHealthUpdateReceived?.Invoke(currentHealth, maxHealth);
+    }
+
+    [PunRPC]
+    private void RPC_ReceiveWaveUpdate(int currentWave)
+    {
+        Debug.Log($"[PhotonManager] RPC de actualización de oleada recibido: {currentWave}");
+        OnWaveUpdateReceived?.Invoke(currentWave);
+    }
+
+    [PunRPC]
+    private void RPC_ReceiveBaseDestroyed()
+    {
+        Debug.Log("[PhotonManager] RPC de base destruida recibido");
+        OnBaseDestroyedReceived?.Invoke();
+    }
+
+    [PunRPC]
+    private void RPC_ReceiveMonsterDeath()
+    {
+        Debug.Log("[PhotonManager] RPC de muerte de monstruo recibido");
+        OnMonsterDeathReceived?.Invoke();
+    }
+
+    [PunRPC]
+    private void RPC_ReceiveTurretInfo(string turretName, int cost, float damage, float range, int level)
+    {
+        Debug.Log($"[PhotonManager] RPC de información de torreta recibido: {turretName} - Costo: {cost}, Daño: {damage}, Rango: {range}, Nivel: {level}");
+        OnTurretInfoReceived?.Invoke(turretName, cost, damage, range, level);
+    }
+    
+    // --- FIN NUEVOS RPCs PARA ESTADOS DEL JUEGO ---
     // --- FIN NUEVOS RPCs ---
 } 

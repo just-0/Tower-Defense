@@ -45,14 +45,16 @@ public class UniversalPanelManager : MonoBehaviour
         if (Instance == null)
         {
             Instance = this;
-            // Aplicar DontDestroyOnLoad al objeto raíz para que todo el prefab de Managers persista.
-            DontDestroyOnLoad(transform.root.gameObject);
+            // Corregido: aplicar DontDestroyOnLoad al gameObject actual, no al objeto raíz
+            DontDestroyOnLoad(gameObject);
+            Debug.Log("UniversalPanelManager: Instancia creada y marcada como persistente");
         }
         else
         {
             // Si ya existe una instancia (porque volvimos a la escena del menú),
-            // destruimos solo el objeto raíz duplicado.
-            Destroy(transform.root.gameObject);
+            // destruimos solo este objeto duplicado.
+            Debug.Log("UniversalPanelManager: Destruyendo instancia duplicada");
+            Destroy(gameObject);
             return;
         }
         

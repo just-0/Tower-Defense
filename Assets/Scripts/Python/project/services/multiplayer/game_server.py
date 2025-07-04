@@ -133,6 +133,7 @@ class GameServer:
             while self.planning_camera_manager.is_running:
                 frame = self.planning_camera_manager.get_current_frame()
                 if frame is not None:
+                    # El frame de CameraManager ya viene en BGR, perfecto para encode_frame_to_jpeg
                     success, encoded_frame = encode_frame_to_jpeg(frame)
                     if success:
                         await websocket.send(bytes([MESSAGE_TYPE_CAMERA_FRAME]) + encoded_frame)
@@ -342,6 +343,7 @@ class GameServer:
 
                 output_image, _, is_confirmed, selected_cell = self.finger_detector.process_frame(frame_rgb)
                 
+                # output_image del finger_detector ya está en BGR, perfecto para envío
                 success, encoded_frame = encode_frame_to_jpeg(output_image, quality=85)
                 if success:
                     await websocket.send(bytes([MESSAGE_TYPE_CAMERA_FRAME]) + encoded_frame)

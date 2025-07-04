@@ -9,19 +9,30 @@ using System.Linq;
 /// </summary>
 public class SimpleGestureManager : MonoBehaviour
 {
+    [Header("Configuration")]
+    [SerializeField] private bool isEnabled = true;
+    [SerializeField] private bool debugMode = false;
+    
     private List<SimpleHandGesture> gestureComponents = new List<SimpleHandGesture>();
     private int currentFingerCount = 0;
+    private int lastFingerCount = -1; // Para detectar cambios
     private float timer = 0f;
     private SimpleHandGesture activeGesture = null;
+    private bool isInitialized = false;
 
     void Start()
     {
-        // La actualización constante se encargará de encontrar los gestos.
-        // Debug.Log("✅ SimpleGestureManager activado como sistema principal.");
+        if (debugMode)
+            Debug.Log("✅ SimpleGestureManager activado como sistema principal");
+        
+        isInitialized = true;
+        RefreshActiveGestureComponents();
     }
 
     void Update()
     {
+        if (!isEnabled || !isInitialized) return;
+        
         // Refrescar la lista de gestos disponibles en caso de que los paneles cambien.
         RefreshActiveGestureComponents();
         
@@ -37,14 +48,22 @@ public class SimpleGestureManager : MonoBehaviour
     {
         // Buscar todos los gestos en la escena y filtrar solo los que están en un GameObject activo.
         var activeGestures = FindObjectsOfType<SimpleHandGesture>()
-            .Where(g => g.gameObject.activeInHierarchy && g.enabled)
+            .Where(g => g != null && g.gameObject.activeInHierarchy && g.enabled)
             .ToList();
 
         // Actualizar la lista solo si ha habido un cambio para evitar logs innecesarios.
         if (!activeGestures.SequenceEqual(gestureComponents))
         {
-            // Debug.Log($"🔄 Gestos activos cambiaron: {gestureComponents.Count} → {activeGestures.Count}");
+            if (debugMode)
+                Debug.Log($"🔄 Gestos activos cambiaron: {gestureComponents.Count} → {activeGestures.Count}");
+            
             gestureComponents = activeGestures;
+            
+            // Si se eliminaron gestos, resetear el gesto activo si ya no existe
+            if (activeGesture != null && !gestureComponents.Contains(activeGesture))
+            {
+                ResetActiveGesture();
+            }
         }
     }
 
@@ -63,6 +82,9 @@ public class SimpleGestureManager : MonoBehaviour
             // Desactivar y resetear el gesto anterior si existía.
             if (activeGesture != null)
             {
+                if (debugMode)
+                    Debug.Log($"🔄 Desactivando gesto anterior: {activeGesture.GetFingerCount()} dedos");
+                
                 activeGesture.onGestureStopped?.Invoke();
                 activeGesture.SetActive(false);
                 activeGesture.Reset();
@@ -74,6 +96,9 @@ public class SimpleGestureManager : MonoBehaviour
 
             if (activeGesture != null)
             {
+                if (debugMode)
+                    Debug.Log($"✅ Activando nuevo gesto: {activeGesture.GetFingerCount()} dedos");
+                
                 activeGesture.SetActive(true);
                 activeGesture.onGestureStarted?.Invoke();
             }
@@ -94,8 +119,10 @@ public class SimpleGestureManager : MonoBehaviour
                 // Aquí, simplemente dejamos de considerarlo el gesto "activo" para que pueda empezar uno nuevo.
                 if (progress >= 1f)
                 {
-                    activeGesture = null;
-                    timer = 0f;
+                    if (debugMode)
+                        Debug.Log($"✅ Gesto completado: {activeGesture.GetFingerCount()} dedos");
+                    
+                    ResetActiveGesture();
                 }
             }
             else // Es modo Instant
@@ -106,6 +133,15 @@ public class SimpleGestureManager : MonoBehaviour
             }
         }
     }
+    
+    /// <summary>
+    /// Resetea el gesto activo de manera limpia
+    /// </summary>
+    private void ResetActiveGesture()
+    {
+        activeGesture = null;
+        timer = 0f;
+    }
 
     /// <summary>
     /// Método público para que sistemas externos (como MenuGestureController) actualicen el número de dedos.
@@ -114,7 +150,73 @@ public class SimpleGestureManager : MonoBehaviour
     {
         if (currentFingerCount != fingerCount)
         {
+            lastFingerCount = currentFingerCount;
             currentFingerCount = fingerCount;
+            
+            if (debugMode && fingerCount > 0)
+                Debug.Log($"👆 SimpleGestureManager: Dedos actualizados {lastFingerCount} → {currentFingerCount}");
+        }
+    }
+    
+    /// <summary>
+    /// Permite habilitar/deshabilitar el sistema de gestos externamente
+    /// </summary>
+    public void SetEnabled(bool enabled)
+    {
+        if (isEnabled != enabled)
+        {
+            isEnabled = enabled;
+            
+            if (!enabled)
+            {
+                // Si se deshabilita, resetear cualquier gesto activo
+                if (activeGesture != null)
+                {
+                    activeGesture.SetActive(false);
+                    activeGesture.Reset();
+                    ResetActiveGesture();
+                }
+                
+                if (debugMode)
+                    Debug.Log("❌ SimpleGestureManager deshabilitado");
+            }
+            else
+            {
+                if (debugMode)
+                    Debug.Log("✅ SimpleGestureManager habilitado");
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Obtiene información del estado actual para debugging
+    /// </summary>
+    public string GetStatusInfo()
+    {
+        return $"Dedos: {currentFingerCount}, Gestos activos: {gestureComponents.Count}, " +
+               $"Gesto actual: {(activeGesture != null ? activeGesture.GetFingerCount().ToString() : "ninguno")}, " +
+               $"Habilitado: {isEnabled}";
+    }
+    
+    /// <summary>
+    /// Fuerza la actualización de la lista de gestos (útil cuando se cambian paneles)
+    /// </summary>
+    public void ForceRefresh()
+    {
+        if (debugMode)
+            Debug.Log("🔄 SimpleGestureManager: Forzando actualización de gestos");
+        
+        RefreshActiveGestureComponents();
+    }
+
+    void OnDisable()
+    {
+        // Limpiar cuando se desactiva
+        if (activeGesture != null)
+        {
+            activeGesture.SetActive(false);
+            activeGesture.Reset();
+            ResetActiveGesture();
         }
     }
 } 

@@ -66,22 +66,19 @@ class FingerCounter:
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_drawing_styles = mp.solutions.drawing_styles
         
-        # Objeto CLAHE para mejora de contraste, se crea una vez para eficiencia
-        self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        
-        # Configuración mejorada de MediaPipe Hands
+        # Configuración SIMPLE de MediaPipe Hands
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
             max_num_hands=1,
-            model_complexity=1,  # Modelo más preciso (0-simple, 1-completo)
-            min_detection_confidence=0.6,
-            min_tracking_confidence=0.6
+            model_complexity=0,  # Modelo simple (más rápido)
+            min_detection_confidence=0.5,  # Menos estricto
+            min_tracking_confidence=0.5    # Menos estricto
         )
         
         # Propiedades de cámara y threading
         self.camera = None
         self.is_running = False
-        self.current_frame = None
+        self.current_frame_bgr = None  # Frame en formato BGR para envío
         self.debug_frame = None
         self.processed_frame = None
         self.lock = threading.Lock()
@@ -91,14 +88,9 @@ class FingerCounter:
         self.finger_count = 0
         self.hand_detected = False
         
-        # Filtrado temporal (estabilizador)
-        self.history_length = 5
+        # Filtrado temporal MÍNIMO
+        self.history_length = 3  # Solo 3 frames
         self.finger_count_history = deque(maxlen=self.history_length)
-        self.landmarks_history = []
-        
-        # Umbrales y configuración para detección robusta
-        self.thumb_angle_threshold = 150  # Ángulo para detectar pulgar levantado
-        self.finger_height_threshold = 0.05  # Umbral para altura de dedos
         
         # Estado de depuración
         self.debug_mode = False
@@ -182,7 +174,6 @@ class FingerCounter:
                         read_fail_count = 0
                         frame_count = 0
                         print(f"Cámara cambiada con éxito al índice {self.camera_index}.")
-                # -----------------------------------
 
                 # --- LÓGICA DE RECUPERACIÓN DE CÁMARA ---
                 if not self.camera.isOpened():
@@ -193,14 +184,12 @@ class FingerCounter:
                     if not self.camera.isOpened():
                         time.sleep(1.0) # Esperar más si el reinicio falla
                         continue
-                # ----------------------------------------
 
-                ret, frame = self.camera.read()
+                ret, frame_bgr_original = self.camera.read()
                 
                 if not ret:
                     read_fail_count += 1
                     print(f"Advertencia: No se pudo leer el frame. Fallo #{read_fail_count}")
-                    # Si falla muchas veces seguidas, intentamos un reinicio completo
                     if read_fail_count > 20: # Tras ~2 segundos de fallos
                         print("Demasiados fallos de lectura. Reiniciando la cámara por completo...")
                         self.camera.release()
@@ -208,30 +197,39 @@ class FingerCounter:
                         self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
                         self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
                         self.camera.set(cv2.CAP_PROP_FPS, self.fps)
-                        read_fail_count = 0 # Reiniciar contador
+                        read_fail_count = 0
                     time.sleep(0.1)
                     continue
                 
-                read_fail_count = 0 # El reinicio fue exitoso en la primera lectura
+                read_fail_count = 0
                 
                 # Voltear horizontalmente para una experiencia tipo espejo
-                frame = cv2.flip(frame, 1)
+                frame_bgr_original = cv2.flip(frame_bgr_original, 1)
                 
-                # Convertir a RGB para MediaPipe
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                # *** ARREGLO CRÍTICO: CREAR COPIA DEFENSIVA ***
+                # Hacer una copia del frame BGR ANTES de cualquier procesamiento
+                # Esto garantiza que el frame original nunca sea modificado
+                frame_bgr_for_sending = frame_bgr_original.copy()
                 
-                # Procesar el frame con MediaPipe (evitar copias innecesarias)
-                frame_rgb.flags.writeable = False
-                results = self.hands.process(frame_rgb)
-                frame_rgb.flags.writeable = True
+                # Crear una copia separada para MediaPipe para evitar contaminación
+                frame_bgr_for_mediapipe = frame_bgr_original.copy()
                 
-                # Crear una copia para dibujar
+                # ARREGLO DEL PIPELINE DE COLORES:
+                # 1. Convertir COPIA a RGB para MediaPipe (nunca el original)
+                frame_rgb_for_mediapipe = cv2.cvtColor(frame_bgr_for_mediapipe, cv2.COLOR_BGR2RGB)
+                
+                # Procesar el frame con MediaPipe usando la copia RGB
+                frame_rgb_for_mediapipe.flags.writeable = False
+                results = self.hands.process(frame_rgb_for_mediapipe)
+                frame_rgb_for_mediapipe.flags.writeable = True
+                
+                # Crear frame de debug si es necesario (usando otra copia)
                 debug_frame = None
                 if self.debug_mode:
-                    debug_frame = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR).copy()
+                    debug_frame = frame_bgr_original.copy()  # Otra copia independiente
                 
-                # Contar dedos y visualizar
-                count, processed_frame = self._count_fingers(results, frame_rgb, debug_frame)
+                # Contar dedos y visualizar (usando la copia BGR para debug)
+                count, processed_frame = self._count_fingers_improved(results, frame_bgr_for_mediapipe, debug_frame)
                 
                 # Actualizar FPS
                 frame_count += 1
@@ -241,8 +239,15 @@ class FingerCounter:
                     frame_count = 0
                     start_time = time.time()
                 
+                # Debug: Verificar ocasionalmente que el frame está en BGR (fuera del lock)
+                if frame_count % 100 == 0:  # Solo cada 100 frames para no spamear
+                    print(f"[FingerCounter] Frame #{frame_count}: Preparando frame BGR limpio {frame_bgr_for_sending.shape}, dtype={frame_bgr_for_sending.dtype}")
+                
                 with self.lock:
-                    self.current_frame = frame_rgb
+                    # *** IMPORTANTE: Guardar la copia limpia para envío ***
+                    # Esta copia nunca fue tocada por MediaPipe ni ningún otro procesamiento
+                    self.current_frame_bgr = frame_bgr_for_sending
+                    
                     if self.debug_mode and debug_frame is not None:
                         # Añadir información de FPS
                         cv2.putText(debug_frame, f"FPS: {actual_fps:.1f}", (10, 30), 
@@ -261,215 +266,96 @@ class FingerCounter:
                 
             except Exception as e:
                 print(f"Error en hilo de cámara: {str(e)}")
-                time.sleep(0.1)  # Evitar bucle de error rápido
-    
-    def _preprocess_frame(self, frame):
-        """
-        Aplica mejoras de contraste al frame para optimizar la detección con poca luz.
-        También estandariza el pipeline de color para evitar tintes azules.
-        """
-        # Convertir a espacio de color LAB que separa luminosidad de color
-        lab_image = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-        l_channel, a_channel, b_channel = cv2.split(lab_image)
-        
-        # Aplicar CLAHE solo al canal de luminosidad (L)
-        l_channel_eq = self.clahe.apply(l_channel)
-        
-        # Unir canales y convertir de vuelta a BGR
-        updated_lab_image = cv2.merge((l_channel_eq, a_channel, b_channel))
-        processed_frame = cv2.cvtColor(updated_lab_image, cv2.COLOR_LAB2BGR)
-        
-        return processed_frame
+                time.sleep(0.1)
 
-    def _calculate_angle(self, p1, p2, p3):
+    def _count_fingers_improved(self, results, frame_bgr, debug_frame=None):
         """
-        Calcula el ángulo entre tres puntos.
-        
-        Args:
-            p1, p2, p3: Puntos en el espacio 3D
-            
-        Returns:
-            float: Ángulo en grados
-        """
-        # Vectores
-        v1 = [p1.x - p2.x, p1.y - p2.y, p1.z - p2.z]
-        v2 = [p3.x - p2.x, p3.y - p2.y, p3.z - p2.z]
-        
-        # Producto punto
-        dot = sum(a*b for a, b in zip(v1, v2))
-        
-        # Magnitudes
-        mag1 = math.sqrt(sum(a*a for a in v1))
-        mag2 = math.sqrt(sum(a*a for a in v2))
-        
-        # Evitar división por cero
-        if mag1 * mag2 == 0:
-            return 0
-            
-        # Calcular ángulo
-        cos_angle = max(-1, min(1, dot / (mag1 * mag2)))
-        angle = math.degrees(math.acos(cos_angle))
-        
-        return angle
-    
-    def _is_thumb_raised(self, landmarks):
-        """
-        Determina si el pulgar está levantado de una forma más robusta,
-        comparando su distancia a la base del dedo índice.
-        """
-        # Puntos clave
-        thumb_tip = landmarks[4]
-        thumb_mcp = landmarks[2] # nudillo base del pulgar
-        index_mcp = landmarks[5] # nudillo base del índice
-        
-        # El pulgar se considera "fuera" si su punta está más lejos de la palma 
-        # (representada por el índice) que su propia base.
-        dist_tip_to_index = math.hypot(thumb_tip.x - index_mcp.x, thumb_tip.y - index_mcp.y)
-        dist_mcp_to_index = math.hypot(thumb_mcp.x - index_mcp.x, thumb_mcp.y - index_mcp.y)
-        
-        return dist_tip_to_index > dist_mcp_to_index
-
-    def _is_finger_raised(self, landmarks, wrist_landmark, mcp_idx, pip_idx, tip_idx):
-        """
-        Determina si un dedo está levantado de forma robusta, independientemente de la orientación.
-        Un dedo está levantado si está (1) recto y (2) su punta está más alejada de la muñeca que su nudillo.
-        """
-        # Puntos clave
-        tip = landmarks[tip_idx]
-        pip = landmarks[pip_idx] # Articulación media (interfalángica proximal)
-        mcp = landmarks[mcp_idx] # Nudillo (metacarpofalángica)
-
-        # 1. Comprobar si el dedo está relativamente recto.
-        is_straight = self._calculate_angle(mcp, pip, tip) > 150.0
-
-        # 2. Comprobar si la punta del dedo está más alejada de la muñeca que la articulación media.
-        #    Esto evita contar dedos que están doblados hacia la palma.
-        dist_tip_wrist = math.hypot(tip.x - wrist_landmark.x, tip.y - wrist_landmark.y)
-        dist_pip_wrist = math.hypot(pip.x - wrist_landmark.x, pip.y - wrist_landmark.y)
-        
-        is_away_from_palm = dist_tip_wrist > dist_pip_wrist
-        
-        return is_straight and is_away_from_palm
-    
-    def _detect_hand_orientation(self, landmarks):
-        """
-        Detecta si la mano es izquierda o derecha basado en la posición del pulgar.
-        
-        Args:
-            landmarks: Puntos clave de la mano
-            
-        Returns:
-            bool: True si es mano izquierda
-        """
-        # Calcular orientación basada en la posición relativa del pulgar y el meñique
-        thumb_tip = landmarks[4]
-        pinky_tip = landmarks[20]
-        
-        return thumb_tip.x > pinky_tip.x
-    
-    def _count_fingers(self, results, frame, debug_frame=None):
-        """
-        Cuenta el número de dedos levantados en el frame con detección mejorada.
-        
-        Args:
-            results: Resultados de landmarks de MediaPipe
-            frame: Frame actual
-            debug_frame: Frame para visualización de depuración
-            
-        Returns:
-            tuple: (Número de dedos levantados, Frame procesado con visualización)
+        Versión SIMPLIFICADA de conteo de dedos - menos es más.
         """
         finger_count = 0
         processed_frame = None
         
-        h, w, _ = frame.shape
-        
-        # Reiniciar estado de detección
+        h, w, _ = frame_bgr.shape
         self.hand_detected = False
         
         if results.multi_hand_landmarks:
             self.hand_detected = True
-            
-            # Como solo procesamos una mano, tomamos la primera y única detectada
             hand_landmarks = results.multi_hand_landmarks[0]
-            
-            # Obtener landmarks y muñeca
             landmarks = hand_landmarks.landmark
-            wrist = landmarks[0]
             
-            # Comprobar el pulgar (método mejorado)
-            if self._is_thumb_raised(landmarks):
-                finger_count += 1
+            # Convertir landmarks a coordenadas
+            lm_list = []
+            for lm in landmarks:
+                lm_list.append([int(lm.x * w), int(lm.y * h)])
             
-            # Comprobar otros dedos con el método robusto
-            finger_indices = [
-                (5, 6, 8),    # Índice: mcp, pip, tip
-                (9, 10, 12),  # Medio: mcp, pip, tip
-                (13, 14, 16), # Anular: mcp, pip, tip
-                (17, 18, 20)  # Meñique: mcp, pip, tip
-            ]
+            # Lista simple de dedos levantados
+            fingers = []
             
-            for mcp, pip, tip in finger_indices:
-                if self._is_finger_raised(landmarks, wrist, mcp, pip, tip):
-                    finger_count += 1
+            # PULGAR (índice 4) - Método simple
+            # Comparar tip del pulgar con el punto medio del pulgar
+            if lm_list[4][0] > lm_list[3][0]:  # Mano derecha
+                fingers.append(1)
+            else:  # Mano izquierda  
+                fingers.append(0)
             
-            # Dibujar landmarks y añadir información visual en modo depuración
+            # OTROS 4 DEDOS - Método súper simple
+            # Solo comparar si la punta está más arriba que la articulación media
+            tip_ids = [8, 12, 16, 20]  # Puntas
+            pip_ids = [6, 10, 14, 18]  # Articulaciones medias
+            
+            for i in range(4):
+                if lm_list[tip_ids[i]][1] < lm_list[pip_ids[i]][1]:  # Y menor = más arriba
+                    fingers.append(1)
+                else:
+                    fingers.append(0)
+            
+            # Contar dedos
+            finger_count = fingers.count(1)
+            
+            # Debug simple
             if self.debug_mode and debug_frame is not None:
-                # Dibujar landmarks
                 self.mp_drawing.draw_landmarks(
-                    debug_frame,
-                    hand_landmarks,
-                    self.mp_hands.HAND_CONNECTIONS,
-                    self.mp_drawing_styles.get_default_hand_landmarks_style(),
-                    self.mp_drawing_styles.get_default_hand_connections_style()
-                )
+                    debug_frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
+                
+                cv2.putText(debug_frame, f"DEDOS: {finger_count}", (10, 50), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3)
+                
+                # Mostrar estado de cada dedo
+                finger_names = ["Pulgar", "Indice", "Medio", "Anular", "Meñique"]
+                for i, (name, up) in enumerate(zip(finger_names, fingers)):
+                    color = (0, 255, 0) if up else (0, 0, 255)
+                    cv2.putText(debug_frame, f"{name}: {'Si' if up else 'No'}", 
+                               (10, 90 + i * 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
             
-            # Crear un frame procesado simple con el conteo de dedos
+            # Frame procesado simple
             processed_frame = np.zeros((h, w, 3), dtype=np.uint8)
-            cv2.putText(processed_frame, f"Dedos: {finger_count}", (w//2-100, h//2),
-                       cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 3)
+            cv2.putText(processed_frame, f"{finger_count}", (w//2-50, h//2),
+                       cv2.FONT_HERSHEY_SIMPLEX, 5, (0, 255, 0), 10)
 
         return finger_count, processed_frame
     
     def _get_stable_finger_count(self):
         """
-        Obtiene un conteo de dedos estable utilizando un filtro temporal.
-        
-        Returns:
-            int: Conteo de dedos estabilizado
+        Filtro temporal SIMPLE - solo moda básica.
         """
         if not self.finger_count_history:
             return 0
             
-        # Usar la moda (el valor más frecuente) para estabilizar
-        counts = {}
-        for count in self.finger_count_history:
-            if count in counts:
-                counts[count] += 1
-            else:
-                counts[count] = 1
-                
-        # Encontrar el valor más frecuente
-        max_count = 0
-        stable_count = 0
-        
-        for count, frequency in counts.items():
-            if frequency > max_count:
-                max_count = frequency
-                stable_count = count
-                
-        return stable_count
+        # Simplemente usar el valor más frecuente en el historial
+        from collections import Counter
+        counter = Counter(self.finger_count_history)
+        return counter.most_common(1)[0][0]
     
     def get_current_frame(self):
         """
-        Obtiene el frame de cámara más reciente.
+        Obtiene el frame de cámara más reciente EN FORMATO BGR (correcto para JPEG).
         
         Returns:
-            numpy.ndarray: Copia del frame actual o None si no hay frame disponible.
+            numpy.ndarray: Copia del frame actual en BGR o None si no hay frame disponible.
         """
         with self.lock:
-            if self.current_frame is not None:
-                return self.current_frame.copy()
+            if self.current_frame_bgr is not None:
+                return self.current_frame_bgr.copy()
             return None
     
     def get_debug_frame(self):
@@ -553,42 +439,32 @@ class FingerCounter:
             print(f"Error al detener la cámara: {str(e)}")
 
 
-# Ejemplo de uso
+# Ejemplo de uso SIMPLE
 if __name__ == "__main__":
-    # Crear instancia del contador de dedos
-    finger_counter = FingerCounter(camera_index=None)
+    print("Contador de dedos simple - Presiona 'q' para salir")
     
-    # Activar modo depuración
+    # Crear contador
+    finger_counter = FingerCounter()
     finger_counter.set_debug_mode(True)
     
-    # Iniciar la cámara
+    # Iniciar cámara
     if finger_counter.start_camera():
         try:
             while True:
-                # Obtener frame de depuración
                 debug_frame = finger_counter.get_debug_frame()
                 
-                # Mostrar información
                 if debug_frame is not None:
-                    # Añadir conteo de dedos al frame
-                    count = finger_counter.get_finger_count()
-                    cv2.putText(debug_frame, f"Conteo: {count}", (20, 70), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 3)
+                    cv2.imshow("Dedos", debug_frame)
                     
-                    # Mostrar frame
-                    cv2.imshow("Contador de Dedos", debug_frame)
-                    
-                # Salir con 'q'
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
                     
-                time.sleep(0.01)  # Reducir uso de CPU
+                time.sleep(0.03)  # ~30 FPS
                 
         except KeyboardInterrupt:
-            print("Programa interrumpido por el usuario")
+            print("Saliendo...")
         finally:
-            # Liberar recursos
             finger_counter.stop_camera()
             cv2.destroyAllWindows()
     else:
-        print("No se pudo iniciar la cámara. Verifique la conexión y el índice.")
+        print("Error: No se pudo iniciar la cámara")

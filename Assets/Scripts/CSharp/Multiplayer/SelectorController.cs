@@ -15,6 +15,9 @@ public class SelectorController : MonoBehaviour
     [SerializeField] private Text fingerCountText;
     [SerializeField] private Slider holdProgressSlider;
     [SerializeField] private Text phaseText;
+    
+    [Header("Game UI")]
+    [SerializeField] private SelectorGameUI selectorGameUI;
 
     [Header("Settings")]
     [SerializeField] private string gestureServerUrl = "ws://localhost:8768";
@@ -54,6 +57,16 @@ public class SelectorController : MonoBehaviour
         else
         {
             Debug.LogError("PhotonManager.Instance es nulo en Start. No se pueden suscribir los eventos.");
+        }
+
+        // Auto-detectar SelectorGameUI si no está asignada
+        if (selectorGameUI == null)
+        {
+            selectorGameUI = FindObjectOfType<SelectorGameUI>();
+            if (selectorGameUI == null)
+            {
+                Debug.LogWarning("[SelectorController] No se encontró SelectorGameUI en la escena. La UI del juego no se actualizará.");
+            }
         }
 
         await ConnectToGestureServer();
@@ -119,8 +132,16 @@ public class SelectorController : MonoBehaviour
             // Turret selection does not require holding
             if (currentFingerCount >= 1 && currentFingerCount <= 3)
             {
-                PhotonManager.Instance.SendTurretSelect(currentFingerCount - 1);
+                int weaponIndex = currentFingerCount - 1;
+                PhotonManager.Instance.SendTurretSelect(weaponIndex);
                 UpdateStatus($"Sent: Select Turret {currentFingerCount}");
+                
+                // Actualizar UI del selector para mostrar arma seleccionada
+                if (SelectorGameUI.Instance != null)
+                {
+                    SelectorGameUI.Instance.SetSelectedWeapon(weaponIndex);
+                }
+                
                 cooldownTimer = 0.5f; // Short cooldown for turret selection
                 return;
             }
@@ -169,8 +190,24 @@ public class SelectorController : MonoBehaviour
         UpdateStatus($"Sent Command: {command}");
 
         // Change local state after sending command
-        if (command == "START_COMBAT") currentPhase = GamePhase.Combat;
-        else if (command == "STOP_COMBAT") currentPhase = GamePhase.Planning;
+        if (command == "START_COMBAT") 
+        {
+            currentPhase = GamePhase.Combat;
+            // Actualizar UI del selector para mostrar fase de combate
+            if (SelectorGameUI.Instance != null)
+            {
+                SelectorGameUI.Instance.SetPhase(true);
+            }
+        }
+        else if (command == "STOP_COMBAT") 
+        {
+            currentPhase = GamePhase.Planning;
+            // Actualizar UI del selector para mostrar fase de planificación
+            if (SelectorGameUI.Instance != null)
+            {
+                SelectorGameUI.Instance.SetPhase(false);
+            }
+        }
     }
 
     private void ProcessCameraFrame(byte[] messageData)

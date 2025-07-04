@@ -123,6 +123,7 @@ class GestureServer:
             while self.finger_counter.is_running:
                 frame = self.finger_counter.get_current_frame()
                 if frame is not None:
+                    # El frame de finger_counter.get_current_frame() ya viene en BGR
                     success, encoded_frame = encode_frame_to_jpeg(frame)
                     if success:
                         await websocket.send(bytes([MESSAGE_TYPE_CAMERA_FRAME]) + encoded_frame)

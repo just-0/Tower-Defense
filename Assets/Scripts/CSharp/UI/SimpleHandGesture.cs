@@ -305,10 +305,7 @@ public class SimpleHandGesture : MonoBehaviour
     {
         isActive = false;
         
-        // ⚠️ DETENER TODAS LAS CORRUTINAS INMEDIATAMENTE
-        StopAllCoroutines();
-        
-        // EJECUTAR ACCIONES INMEDIATAMENTE
+        // Ejecutar acciones inmediatamente (sin corrutinas)
         ExecuteGestureActions();
         
         // Iniciar el cooldown si está configurado
@@ -318,26 +315,25 @@ public class SimpleHandGesture : MonoBehaviour
             cooldownTimer = cooldownAfterCompletion;
         }
         
-        // NO USAR CORRUTINAS - Solo efecto visual síncrono
+        // Efecto visual inmediato (sin corrutinas)
         DoImmediateEffect();
     }
     
     void ExecuteGestureActions()
     {
-        // Debug.Log($"🎯 Ejecutando acción para {fingerCount} dedos");
-        
-        // Ejecutar el botón asignado
-        if (targetButton != null)
+        if (Application.isPlaying && gameObject.activeInHierarchy)
         {
-            // Debug.Log($"Ejecutando botón asignado para {fingerCount} dedos");
-            targetButton.onClick.Invoke();
-        }
-        
-        // Ejecutar UnityEvent personalizado
-        if (onGestureCompleted != null)
-        {
-            // Debug.Log($"Ejecutando evento personalizado para {fingerCount} dedos");
-            onGestureCompleted.Invoke();
+            // Ejecutar el botón asignado
+            if (targetButton != null)
+            {
+                targetButton.onClick.Invoke();
+            }
+            
+            // Ejecutar UnityEvent personalizado
+            if (onGestureCompleted != null)
+            {
+                onGestureCompleted.Invoke();
+            }
         }
         
         UpdateProgress(0f);
@@ -349,16 +345,11 @@ public class SimpleHandGesture : MonoBehaviour
         // Efecto visual SÍNCRONO (sin corrutinas)
         if (gameObject.activeInHierarchy && handImage != null)
         {
-            // Debug.Log($"💫 Efecto inmediato para {fingerCount} dedos");
             // Flash rápido sin corrutina
             Color original = handImage.color;
             handImage.color = Color.white;
             // Restaurar inmediatamente (sin wait)
             handImage.color = original;
-        }
-        else
-        {
-            // Debug.Log($"⚠️ Objeto {fingerCount} dedos inactivo - Sin efectos visuales");
         }
         
         // Reset inmediato
