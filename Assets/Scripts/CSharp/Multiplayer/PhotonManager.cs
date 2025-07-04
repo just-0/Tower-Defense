@@ -191,8 +191,13 @@ public class PhotonManager : MonoBehaviourPunCallbacks
     {
         if (PhotonNetwork.InRoom && IsMasterClient())
         {
+            Debug.Log("[PhotonManager] Enviando RPC_ReceiveSamComplete a otros jugadores...");
             // Usa el RPC existente para notificar a los otros jugadores.
             photonView.RPC("RPC_ReceiveSamComplete", RpcTarget.Others);
+        }
+        else
+        {
+            Debug.LogWarning($"[PhotonManager] No se puede enviar BroadcastSamComplete - InRoom: {PhotonNetwork.InRoom}, IsMasterClient: {IsMasterClient()}");
         }
     }
 
@@ -245,8 +250,9 @@ public class PhotonManager : MonoBehaviourPunCallbacks
     [PunRPC]
     private void RPC_ReceiveSamComplete()
     {
-        Debug.Log("[PhotonManager] RPC de finalización de SAM recibido.");
+        Debug.Log("[PhotonManager] RPC de finalización de SAM recibido. Invocando OnSamProcessingComplete...");
         OnSamProcessingComplete?.Invoke();
+        Debug.Log("[PhotonManager] OnSamProcessingComplete invocado exitosamente.");
     }
 
     [PunRPC]

@@ -67,12 +67,18 @@ public class LoadingManager : MonoBehaviour
         var photonManager = PhotonManager.Instance;
         if (photonManager != null)
         {
+            Debug.Log("[LoadingManager] Suscribiéndose a eventos de PhotonManager...");
             // No queremos que el MasterClient (Colocador) reciba sus propios eventos de vuelta
             // La lógica de RPC con RpcTarget.Others ya lo previene, pero esta es una capa extra de seguridad.
             // Nos suscribimos para que el cliente (Selector) pueda mostrar el progreso.
             photonManager.OnProgressUpdateReceived += HandleRemoteProgressUpdate;
             photonManager.OnSamProcessingComplete += HandleRemoteSamComplete;
             photonManager.OnErrorReceived += HandleRemoteError;
+            Debug.Log("[LoadingManager] ✅ Suscripción a eventos de PhotonManager completada.");
+        }
+        else
+        {
+            Debug.LogWarning("[LoadingManager] PhotonManager.Instance es null, no se pueden suscribir eventos remotos.");
         }
     }
 
@@ -104,8 +110,9 @@ public class LoadingManager : MonoBehaviour
     private void HandleRemoteSamComplete()
     {
         // Este método es llamado en el cliente Selector cuando el Colocador ha terminado el proceso SAM.
-        Debug.Log("[LoadingManager] Recibida notificación remota de finalización. Ocultando pantalla.");
+        Debug.Log("[LoadingManager] ✅ HandleRemoteSamComplete ejecutado - Recibida notificación remota de finalización. Ocultando pantalla...");
         Hide();
+        Debug.Log("[LoadingManager] ✅ Pantalla de carga ocultada exitosamente en el Selector.");
     }
 
     private void HandleRemoteError(string errorMessage, string errorCode)
@@ -227,12 +234,18 @@ public class LoadingManager : MonoBehaviour
     /// </summary>
     public void Hide()
     {
+        Debug.Log("[LoadingManager] Hide() llamado - Ocultando pantalla de carga...");
         if (currentLoadingScreen != null)
         {
             Destroy(currentLoadingScreen);
             currentLoadingScreen = null;
             loadingText = null;
             progressText = null; // Limpiar referencia
+            Debug.Log("[LoadingManager] Pantalla de carga destruida exitosamente.");
+        }
+        else
+        {
+            Debug.LogWarning("[LoadingManager] Hide() llamado pero currentLoadingScreen ya es null.");
         }
     }
 

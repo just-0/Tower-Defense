@@ -282,7 +282,16 @@ public class SAMSystemController : MonoBehaviour // Anteriormente SAMController
             // Notificar a otros jugadores que el procesamiento ha terminado.
             if (photonManager != null && photonManager.IsMasterClient())
             {
+                Debug.Log("[SAMSystemController] Enviando BroadcastSamComplete() a otros jugadores...");
                 photonManager.BroadcastSamComplete();
+            }
+            else if (photonManager == null)
+            {
+                Debug.LogWarning("[SAMSystemController] photonManager es null, no se puede enviar BroadcastSamComplete");
+            }
+            else if (!photonManager.IsMasterClient())
+            {
+                Debug.LogWarning("[SAMSystemController] No es MasterClient, no se envía BroadcastSamComplete");
             }
             
             // Resetear el estado de procesamiento para permitir nuevos intentos
